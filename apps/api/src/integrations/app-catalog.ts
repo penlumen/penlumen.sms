@@ -5,6 +5,14 @@
  */
 export const APP_CATALOG = [
   {
+    key: 'ams',
+    name: 'Assessment',
+    full_name: 'Assessment Management System',
+    description:
+      'Assessment and examination management, marked and fed into report cards.',
+    icon: 'clipboard-check',
+  },
+  {
     key: 'lms',
     name: 'Learning',
     full_name: 'Learning Management System',
@@ -13,17 +21,10 @@ export const APP_CATALOG = [
   },
   {
     key: 'vls',
-    name: 'Virtual Lab',
+    name: 'Lab',
     full_name: 'Virtual Lab System',
     description: 'Hands-on science and computing experiments in the browser.',
     icon: 'flask-conical',
-  },
-  {
-    key: 'ems',
-    name: 'Exams',
-    full_name: 'Exam Management System',
-    description: 'Online tests and exams, marked and fed into report cards.',
-    icon: 'clipboard-check',
   },
 ] as const;
 

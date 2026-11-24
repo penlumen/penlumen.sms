@@ -296,6 +296,7 @@ export default function ClassDetailPage() {
                                 <TableRow>
                                     <TableHead className='w-24'>Order</TableHead>
                                     <TableHead>Name</TableHead>
+                                    <TableHead>Teacher</TableHead>
                                     <TableHead>Description</TableHead>
                                     <TableHead className='text-right'>Actions</TableHead>
                                 </TableRow>
@@ -303,7 +304,7 @@ export default function ClassDetailPage() {
                             <TableBody>
                                 {filteredSubjects.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={4} className='h-24 text-center text-muted-foreground'>
+                                        <TableCell colSpan={5} className='h-24 text-center text-muted-foreground'>
                                             No subjects found.
                                         </TableCell>
                                     </TableRow>
@@ -357,6 +358,9 @@ export default function ClassDetailPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell className='font-medium'>{subject.name}</TableCell>
+                                            <TableCell className={subject.teacher ? undefined : 'text-muted-foreground'}>
+                                                {subject.teacher?.name || 'No teacher yet'}
+                                            </TableCell>
                                             <TableCell className='max-w-[300px] truncate text-muted-foreground'>
                                                 {subject.description || '—'}
                                             </TableCell>

@@ -276,7 +276,7 @@ async function main() {
         {
           icon: 'trophy',
           title: 'Sports and clubs',
-          description: 'Football, debate, coding and music clubs every week.',
+          description: 'Football, debate, and coding clubs every week.',
         },
       ],
       values: [
@@ -744,7 +744,7 @@ async function main() {
         is_public: false,
       },
       {
-        title: 'First term examinations begin',
+        title: 'Examinations begin',
         description: 'Examinations run for two weeks.',
         date: day('2026-12-01'),
         start_time: '08:00',

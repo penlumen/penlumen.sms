@@ -6,13 +6,75 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CacheService } from '../cache/cache.service.js';
 import { DecodedUser } from '../common/types/auth.js';
+import { WebhooksService } from '../integrations/webhooks.service.js';
 
 @Injectable()
 export class SubjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly webhooks: WebhooksService,
   ) {}
+
+  /**
+   * Tells connected apps (class.updated) that a class's subjects changed, so
+   * an exam app can offer the right subjects for each class.
+   */
+  private async notifyApps(classUuid: string) {
+    const cls = await this.prisma.class.findUnique({
+      where: { uuid: classUuid },
+      select: {
+        uuid: true,
+        name: true,
+        status: true,
+        teacher_uuid: true,
+        teachers_uuid: true,
+        branch: { select: { uuid: true, school_uuid: true } },
+        subjects: {
+          select: { uuid: true, name: true, teacher_uuid: true },
+          orderBy: [{ position: 'asc' }, { name: 'asc' }],
+        },
+      },
+    });
+    if (!cls?.branch) return;
+    const { branch, subjects, ...rest } = cls;
+    this.webhooks.emit(branch.school_uuid, branch.uuid, 'class.updated', {
+      ...rest,
+      subjects: subjects.map((s) => s.name),
+      subject_teachers: subjects,
+    });
+  }
+
+  /**
+   * The subject's teacher from a request: a staff member of the school, or
+   * null to clear it. Undefined leaves it as it is.
+   */
+  private async teacherFrom(
+    decoded: DecodedUser,
+    value: unknown,
+  ): Promise<string | null | undefined> {
+    if (value === undefined) return undefined;
+    if (value === null || value === '') return null;
+    const teacher =
+      typeof value === 'string'
+        ? await this.prisma.user.findFirst({
+            where: {
+              uuid: value,
+              school_uuid: decoded.school_uuid,
+              role: { in: ['ROOT', 'ADMIN', 'STAFF'] },
+            },
+            select: { uuid: true },
+          })
+        : null;
+    if (!teacher) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        success: false,
+        message: 'Choose a teacher from your staff',
+      });
+    }
+    return teacher.uuid;
+  }
 
   private cacheKey(classUuid: string) {
     return `subjects:index:${classUuid}`;
@@ -26,6 +88,7 @@ export class SubjectsService {
         this.prisma.subject.findMany({
           where: { class_uuid: classUuid },
           orderBy: [{ position: 'asc' }, { created_at: 'asc' }],
+          include: { teacher: { select: { uuid: true, name: true } } },
         }),
     );
     return {
@@ -70,6 +133,7 @@ export class SubjectsService {
       ),
     );
     await this.cache.del(this.cacheKey(classUuid));
+    await this.notifyApps(classUuid);
     return this.index(classUuid);
   }
 
@@ -116,6 +180,8 @@ export class SubjectsService {
       });
     }
 
+    const teacher_uuid = await this.teacherFrom(decoded, body.teacher_uuid);
+
     // New subjects go to the end of the class's order.
     const last = await this.prisma.subject.aggregate({
       where: { class_uuid: classUuid },
@@ -127,9 +193,11 @@ export class SubjectsService {
         description,
         class_uuid: classUuid,
         position: (last._max.position ?? -1) + 1,
+        teacher_uuid: teacher_uuid ?? null,
       },
     });
     await this.cache.del(this.cacheKey(classUuid));
+    await this.notifyApps(classUuid);
 
     return {
       status: 201,
@@ -170,11 +238,26 @@ export class SubjectsService {
       });
     }
 
+    const teacher_uuid = await this.teacherFrom(decoded, body.teacher_uuid);
+    const before = await this.prisma.subject.findUnique({
+      where: { uuid: subjectUuid },
+      select: { class_uuid: true },
+    });
     const subject = await this.prisma.subject.update({
       where: { uuid: subjectUuid },
-      data: { name, class_uuid, description },
+      data: {
+        name,
+        class_uuid,
+        description,
+        ...(teacher_uuid !== undefined && { teacher_uuid }),
+      },
     });
     await this.cache.del(this.cacheKey(class_uuid));
+    await this.notifyApps(class_uuid);
+    if (before && before.class_uuid !== class_uuid) {
+      await this.cache.del(this.cacheKey(before.class_uuid));
+      await this.notifyApps(before.class_uuid);
+    }
 
     return {
       status: 200,
@@ -197,6 +280,7 @@ export class SubjectsService {
       where: { uuid: subjectUuid },
     });
     await this.cache.del(this.cacheKey(subject.class_uuid));
+    await this.notifyApps(subject.class_uuid);
 
     return { status: 200, success: true, message: 'Subject deleted' };
   }
