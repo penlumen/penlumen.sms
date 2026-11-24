@@ -60,6 +60,7 @@ model User {
   last_branch Branch? @relation("UserLastBranch", fields: [last_branch_uuid], references: [uuid], onUpdate: Cascade, onDelete: SetNull)
 
   heading                   Class[]
+  subjects_taught           Subject[]
   students                  Student[]
   access                    BranchAccess[]
   control                   AccessControl[]
@@ -267,10 +268,12 @@ model Calendar {
   created_at DateTime       @default(now())
   updated_at DateTime       @default(now()) @updatedAt
 
-  results  Result[]
-  events   Event[]
-  branch   Branch    @relation(fields: [branch_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
-  invoices Invoice[]
+  app_scores AppScore[]
+  invoices   Invoice[]
+  results    Result[]
+  events     Event[]
+
+  branch Branch @relation(fields: [branch_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
 }
 
 // ========== STUDENT ==========
@@ -301,6 +304,7 @@ model Student {
   results    Result[]
   attendance StudentAttendance[]
   invoices   Invoice[]
+  app_scores AppScore[]
 
   @@unique([branch_uuid, reg_number])
 }
@@ -328,17 +332,21 @@ model Class {
 
 // ========== SUBJECT ==========
 model Subject {
-  id          Int      @id @default(autoincrement())
-  uuid        String   @unique @default(uuid())
-  class_uuid  String
-  name        String
-  description String?
+  id           Int      @id @default(autoincrement())
+  uuid         String   @unique @default(uuid())
+  class_uuid   String
+  name         String
+  description  String?
   /// Order within the class, set by dragging; report cards follow it.
-  position    Int      @default(0)
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  position     Int      @default(0)
+  /// The teacher who teaches it in this class (academic staff). Connected
+  /// apps let them set tests and exams for it.
+  teacher_uuid String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
 
-  class Class? @relation(fields: [class_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
+  class   Class? @relation(fields: [class_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
+  teacher User?  @relation(fields: [teacher_uuid], references: [uuid], onUpdate: Cascade, onDelete: SetNull)
 
   @@unique([class_uuid, name])
 }
@@ -724,8 +732,43 @@ model IntegrationApp {
   codes      OidcCode[]
   tokens     OidcToken[]
   deliveries WebhookDelivery[]
+  scores     AppScore[]
 
   @@unique([school_uuid, key])
+}
+
+/// Which score on a report a connected app's score counts towards.
+enum ScoreComponent {
+  ASSESSMENT
+  EXAMINATION
+}
+
+/// A score a connected app (such as the exam app) recorded for one student:
+/// one test, CA or exam. A subject's assessment (or examination) on the
+/// student's report is the sum of these for that term, subject and component.
+model AppScore {
+  id            Int            @id @default(autoincrement())
+  uuid          String         @unique @default(uuid())
+  app_uuid      String
+  /// The app's own id for the test or exam, so sending it again updates it.
+  source_id     String
+  /// What the app calls it, e.g. "CA 1 test" or "First term examination".
+  title         String?
+  student_uuid  String
+  calendar_uuid String
+  subject       String
+  component     ScoreComponent
+  /// Marks towards the component, already on the report's scale.
+  score         Decimal        @db.Decimal(5, 2)
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+
+  app      IntegrationApp @relation(fields: [app_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
+  student  Student        @relation(fields: [student_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
+  calendar Calendar       @relation(fields: [calendar_uuid], references: [uuid], onUpdate: Cascade, onDelete: Cascade)
+
+  @@unique([app_uuid, source_id, student_uuid])
+  @@index([student_uuid, calendar_uuid, subject, component])
 }
 
 /// Single-use authorization code from the OpenID Connect sign-in flow.

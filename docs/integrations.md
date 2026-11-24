@@ -1,17 +1,18 @@
 # Connecting an app to Penlumen School
 
 Penlumen School is the student management system (SMS). The Learning
-Management System (LMS), Virtual Lab System (VLS) and Exam Management System
-(EMS) are separate apps, each in its own repository and free to use any
+Management System (LMS), Virtual Lab System (VLS) and Assessment Management System
+(AMS) are separate apps, each in its own repository and free to use any
 language or framework. This document is the contract between them.
 
 The SMS is the **hub**:
 
-| You need to…                       | Use                                   |
-|------------------------------------|---------------------------------------|
-| Sign people in                     | OpenID Connect (authorization code + PKCE) |
-| Read students, classes, staff      | Data API with a client credentials token |
-| Hear about changes as they happen  | Signed webhooks                        |
+| You need to…                        | Use                                        |
+| ----------------------------------- | ------------------------------------------ |
+| Sign people in                      | OpenID Connect (authorization code + PKCE) |
+| Read students, classes, staff       | Data API with a client credentials token   |
+| Put test and exam scores on reports | Scores API with the same token             |
+| Hear about changes as they happen   | Signed webhooks                            |
 
 Nothing here is specific to one language: any standard OIDC client library
 and any HTTP client works.
@@ -28,7 +29,7 @@ A school administrator connects your app in **School Settings › Integrations**
    **signing secret** (shown once).
 4. Ticks the branches the app is for and switches it on.
 
-Until it is switched on, students see the app as *Coming soon*.
+Until it is switched on, students see the app as _Coming soon_.
 
 Each school has its own client ID and secret. An app serving several schools
 stores one set of credentials per school; `school_uuid` in tokens and
@@ -77,17 +78,17 @@ is `https://<api-host>/api/v1/oidc`. It lists every endpoint below.
 
 ### Claims
 
-| Claim           | Who           | Notes |
-|-----------------|---------------|-------|
-| `sub`           | everyone      | Stable id: a user uuid, or a student uuid for students |
-| `name`, `picture` | everyone    | |
-| `email`         | staff, parents | Students have none |
-| `penlumen_role` | everyone      | `admin`, `staff`, `parent` or `student` |
-| `position`      | staff, parents | e.g. `ADMINISTRATIVE`, `ACADEMIC`, `PARENT` |
-| `school_uuid`   | everyone      | |
-| `branch_uuids`  | everyone      | Branches they belong to |
-| `class`         | students      | `{ uuid, name }` |
-| `reg_number`    | students      | |
+| Claim             | Who            | Notes                                                  |
+| ----------------- | -------------- | ------------------------------------------------------ |
+| `sub`             | everyone       | Stable id: a user uuid, or a student uuid for students |
+| `name`, `picture` | everyone       |                                                        |
+| `email`           | staff, parents | Students have none                                     |
+| `penlumen_role`   | everyone       | `admin`, `staff`, `parent` or `student`                |
+| `position`        | staff, parents | e.g. `ADMINISTRATIVE`, `ACADEMIC`, `PARENT`            |
+| `school_uuid`     | everyone       |                                                        |
+| `branch_uuids`    | everyone       | Branches they belong to                                |
+| `class`           | students       | `{ uuid, name }`                                       |
+| `reg_number`      | students       |                                                        |
 
 People are refused (`access_denied`) when the app is off for all of their
 branches, or they belong to another school.
@@ -104,14 +105,18 @@ Content-Type: application/x-www-form-urlencoded
 grant_type=client_credentials
 ```
 
+The token gets the scopes `school.read` (this section) and `results.write`
+(section 4). To get fewer, send `scope=school.read`.
+
 Then call, with `Authorization: Bearer <access_token>`:
 
-| Endpoint | Query |
-|----------|-------|
-| `GET /api/v1/integrations/v1/school` | — returns the school and its branches |
-| `GET /api/v1/integrations/v1/students` | `branch_uuid`, `class_uuid`, `status`, `updated_since`, `page`, `per_page` |
-| `GET /api/v1/integrations/v1/classes` | `branch_uuid`, `updated_since`, `page`, `per_page` |
-| `GET /api/v1/integrations/v1/staff` | `branch_uuid`, `page`, `per_page` |
+| Endpoint                               | Query                                                                                                                                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/integrations/v1/school`   | — returns the school, its `theme` (`{ preset, primary }` from School Settings › Theme, or null for the default blue) and its branches, each with its score limits `assessment_max` and `examination_max` |
+| `GET /api/v1/integrations/v1/students` | `branch_uuid`, `class_uuid`, `status`, `updated_since`, `page`, `per_page`                                                                                                                               |
+| `GET /api/v1/integrations/v1/classes`  | `branch_uuid`, `updated_since`, `page`, `per_page`; each class lists its `subjects` in report order, and `subject_teachers`: each subject's `uuid`, `name` and `teacher_uuid` (the academic staff member who teaches it)                                                                                                      |
+| `GET /api/v1/integrations/v1/staff`    | `branch_uuid`, `page`, `per_page`                                                                                                                                                                        |
+| `GET /api/v1/integrations/v1/terms`    | `branch_uuid`; terms newest first, the current one has `status: ACTIVE`                                                                                                                                  |
 
 Lists return `{ data, page, per_page, total }` (`per_page` up to 200).
 Only branches where the app is switched on are visible. Parents, contact
@@ -122,7 +127,84 @@ Errors use OAuth's shape: `{ error, error_description }` with 400, 401
 (`invalid_token`, `invalid_client`) or 403 (`insufficient_scope`,
 `access_denied`).
 
-## 4. Webhooks
+## 4. Putting scores on reports (Scores API)
+
+Each subject on a student's report has an **assessment** score (CA, out of
+the branch's `assessment_max`, 40 by default) and an **examination** score
+(out of `examination_max`, 60 by default). An app with the `results.write`
+scope can fill either one in.
+
+Send one test's scores at a time:
+
+```
+POST /api/v1/integrations/v1/scores
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "source_id": "your id for this test, e.g. its uuid",
+  "title": "CA 1 test",
+  "subject": "Mathematics",
+  "component": "assessment",
+  "calendar_uuid": "optional: the term; defaults to the branch's active term",
+  "scores": [
+    { "student_uuid": "...", "score": 8.5 },
+    { "student_uuid": "...", "score": 10 }
+  ]
+}
+```
+
+- `component` is `assessment` or `examination`; `subject` must be one of the
+  student's class `subjects`, spelled the same.
+- `score` is marks **on the report's scale**: if a CA test counts for 10 of
+  the 40 assessment marks, send 10 for full marks. Scale the raw paper score
+  in your app.
+- A subject's assessment on the report is the **sum** of every app score sent
+  for it that term, so CA 1, CA 2 and a mid-term test can be sent as three
+  `source_id`s. Sending the same `source_id` again replaces that test's score
+  instead of adding to it.
+- App scores replace whatever a teacher typed for that subject's component.
+- Up to 500 scores per request.
+
+The answer lists what happened to each student:
+
+```json
+{
+  "data": {
+    "saved": 1,
+    "skipped": 1,
+    "results": [
+      {
+        "student_uuid": "...",
+        "status": "saved",
+        "assessment": 18.5,
+        "examination": 0
+      },
+      {
+        "student_uuid": "...",
+        "status": "skipped",
+        "message": "This report is already approved. An administrator must reopen it before scores can change."
+      }
+    ]
+  }
+}
+```
+
+A student is skipped, and nothing changes for them, when their report for
+that term is already **approved**, when the total would go over the branch's
+limit, when the subject isn't one of their class's subjects, or when they
+aren't in a branch the app is switched on for. Fix the cause and send again.
+A malformed request (a missing field, an unknown `component`) is refused
+whole with 422.
+
+Other calls:
+
+| Endpoint                                            | Does                                                                                              |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/integrations/v1/scores?source_id=...`  | Lists the scores you've sent for a test                                                           |
+| `DELETE /api/v1/integrations/v1/scores/{source_id}` | Takes a test's scores off reports (one student with `?student_uuid=`); approved reports keep them |
+
+## 5. Webhooks
 
 The SMS POSTs JSON to your webhook URL:
 
@@ -133,18 +215,24 @@ The SMS POSTs JSON to your webhook URL:
   "created_at": "2026-11-07T15:00:00.000Z",
   "school_uuid": "...",
   "branch_uuid": "...",
-  "data": { "uuid": "...", "name": "...", "reg_number": "...", "status": "active", "class": { "uuid": "...", "name": "..." } }
+  "data": {
+    "uuid": "...",
+    "name": "...",
+    "reg_number": "...",
+    "status": "active",
+    "class": { "uuid": "...", "name": "..." }
+  }
 }
 ```
 
-| Event | `data` |
-|-------|--------|
-| `student.created`, `student.updated` | `uuid, name, reg_number, status, class` |
-| `student.deleted` | `uuid` |
-| `class.created`, `class.updated` | `uuid, name, status, teacher_uuid, teachers_uuid` |
-| `result.published` | `uuid, student_uuid, class_name` |
-| `staff.created` | `uuid, name, email, position` |
-| `ping` | `message` (from the Send test ping button) |
+| Event                                | `data`                                                                                                                     |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `student.created`, `student.updated` | `uuid, name, reg_number, status, class`                                                                                    |
+| `student.deleted`                    | `uuid`                                                                                                                     |
+| `class.created`, `class.updated`     | `uuid, name, status, teacher_uuid, teachers_uuid`; also `subjects` (names, in report order) and `subject_teachers` (`uuid, name, teacher_uuid` per subject) when a class's subjects or their teachers change |
+| `result.published`                   | `uuid, student_uuid, class_name`                                                                                           |
+| `staff.created`                      | `uuid, name, email, position`                                                                                              |
+| `ping`                               | `message` (from the Send test ping button)                                                                                 |
 
 Headers: `X-Penlumen-Event`, `X-Penlumen-Delivery` (same as `id`) and
 `X-Penlumen-Signature: t=<unix seconds>,v1=<hex>`.
@@ -159,7 +247,7 @@ seconds and 5 minutes, then marks the delivery failed; administrators can
 retry it from the delivery log. Webhooks are notifications, not a full sync:
 use the Data API with `updated_since` to catch up after downtime.
 
-## 5. Running locally
+## 6. Running locally
 
 Run the SMS (`apps/api` and `apps/web`), connect your app on
 `http://localhost:<port>` in School Settings › Integrations, and set

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Headers,
@@ -19,6 +20,7 @@ import { DecodedUser } from '../common/types/auth.js';
 import { DataApiService } from './data-api.service.js';
 import { IntegrationsService } from './integrations.service.js';
 import { OidcService } from './oidc.service.js';
+import { ScoresApiService } from './scores-api.service.js';
 
 /** School Settings › Integrations (school administrators). */
 @Controller('integrations')
@@ -151,5 +153,46 @@ export class DataApiController {
     @Query() query: Record<string, any>,
   ) {
     return this.data.staff(authorization, query);
+  }
+
+  @Public()
+  @Get('terms')
+  terms(
+    @Headers('authorization') authorization: string,
+    @Query() query: Record<string, any>,
+  ) {
+    return this.data.terms(authorization, query);
+  }
+}
+
+/** Scores from connected apps onto students' reports (scope results.write). */
+@Controller('integrations/v1/scores')
+export class ScoresApiController {
+  constructor(private readonly scores: ScoresApiService) {}
+
+  @Public()
+  @Post()
+  @HttpCode(200)
+  record(@Headers('authorization') authorization: string, @Body() body: any) {
+    return this.scores.record(authorization, body);
+  }
+
+  @Public()
+  @Get()
+  list(
+    @Headers('authorization') authorization: string,
+    @Query() query: Record<string, any>,
+  ) {
+    return this.scores.list(authorization, query);
+  }
+
+  @Public()
+  @Delete(':sourceId')
+  remove(
+    @Headers('authorization') authorization: string,
+    @Param('sourceId') sourceId: string,
+    @Query() query: Record<string, any>,
+  ) {
+    return this.scores.remove(authorization, sourceId, query);
   }
 }

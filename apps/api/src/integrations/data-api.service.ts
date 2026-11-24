@@ -30,7 +30,13 @@ export class DataApiService {
         school_uuid: token.app.school_uuid,
         uuid: { notIn: token.app.disabled_branch_uuids },
       },
-      select: { uuid: true, name: true },
+      // assessment_max / examination_max: the most each score on a report can be.
+      select: {
+        uuid: true,
+        name: true,
+        assessment_max: true,
+        examination_max: true,
+      },
       orderBy: { created_at: 'asc' },
     });
     return {
@@ -68,9 +74,22 @@ export class DataApiService {
     const { app, branches } = await this.context(authorization);
     const school = await this.prisma.school.findUnique({
       where: { uuid: app.school_uuid },
-      select: { uuid: true, name: true, slug: true, avatar: true },
+      select: { uuid: true, name: true, slug: true, avatar: true, theme: true },
     });
-    return { data: { ...school, app: app.key, branches } };
+    // The brand colour set in School Settings › Theme, so apps can match the
+    // portal: { preset, primary } or null for the default Penlumen blue.
+    const theme = school?.theme as { preset?: string; primary?: string } | null;
+    return {
+      data: {
+        ...school,
+        theme:
+          theme && typeof theme.primary === 'string'
+            ? { preset: theme.preset ?? null, primary: theme.primary }
+            : null,
+        app: app.key,
+        branches,
+      },
+    };
   }
 
   async students(
@@ -133,12 +152,47 @@ export class DataApiService {
           teacher_uuid: true,
           teachers_uuid: true,
           updated_at: true,
+          subjects: {
+            select: { uuid: true, name: true, teacher_uuid: true },
+            orderBy: [{ position: 'asc' }, { name: 'asc' }],
+          },
           _count: { select: { students: true } },
         },
       }),
       this.prisma.class.count({ where }),
     ]);
-    return { data, page, per_page: perPage, total };
+    return {
+      data: data.map(({ subjects, ...cls }) => ({
+        ...cls,
+        subjects: subjects.map((s) => s.name),
+        // Each subject with the teacher who teaches it in this class.
+        subject_teachers: subjects,
+      })),
+      page,
+      per_page: perPage,
+      total,
+    };
+  }
+
+  /** Terms (sessions) of the app's branches; status ACTIVE is the current one. */
+  async terms(authorization: string | undefined, query: Record<string, any>) {
+    const { branchUuids } = await this.context(authorization);
+    const data = await this.prisma.calendar.findMany({
+      where: {
+        branch_uuid: { in: this.branchFilter(branchUuids, query.branch_uuid) },
+      },
+      orderBy: [{ open_date: 'desc' }, { created_at: 'desc' }],
+      select: {
+        uuid: true,
+        branch_uuid: true,
+        session: true,
+        term: true,
+        open_date: true,
+        close_date: true,
+        status: true,
+      },
+    });
+    return { data };
   }
 
   async staff(authorization: string | undefined, query: Record<string, any>) {

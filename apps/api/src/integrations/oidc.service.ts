@@ -25,6 +25,9 @@ export const sha256 = (value: string) =>
 const CODE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_S = 60 * 60;
 export const DATA_SCOPE = 'school.read';
+/** Lets an app record test and exam scores on students' reports. */
+export const SCORES_SCOPE = 'results.write';
+const APP_SCOPES = [DATA_SCOPE, SCORES_SCOPE];
 
 /** Public base URL of this API, for the issuer and endpoint URLs. */
 export const apiUrl = () =>
@@ -73,7 +76,7 @@ export class OidcService {
       grant_types_supported: ['authorization_code', 'client_credentials'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['RS256'],
-      scopes_supported: ['openid', 'profile', 'email', DATA_SCOPE],
+      scopes_supported: ['openid', 'profile', 'email', ...APP_SCOPES],
       token_endpoint_auth_methods_supported: [
         'client_secret_basic',
         'client_secret_post',
@@ -293,7 +296,16 @@ export class OidcService {
   async token(authorization: string | undefined, body: Record<string, any>) {
     const app = await this.authenticateClient(authorization, body);
     if (body.grant_type === 'client_credentials') {
-      return this.issueAccessToken(app, null, null, DATA_SCOPE);
+      // Every app scope unless the app asks for fewer.
+      const requested =
+        typeof body.scope === 'string' && body.scope.trim()
+          ? [...new Set(body.scope.trim().split(/\s+/))]
+          : APP_SCOPES;
+      const unknown = requested.filter((s) => !APP_SCOPES.includes(s));
+      if (unknown.length) {
+        oauthError('invalid_scope', `Unknown scope: ${unknown.join(' ')}`);
+      }
+      return this.issueAccessToken(app, null, null, requested.join(' '));
     }
     if (body.grant_type !== 'authorization_code') {
       oauthError(

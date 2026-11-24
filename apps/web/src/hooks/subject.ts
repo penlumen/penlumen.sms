@@ -39,12 +39,13 @@ export const useSubject = () => {
         }
     };
 
-    const create = async (class_uuid: string, name: string, description?: string) => {
+    const create = async (class_uuid: string, name: string, description?: string, teacher_uuid?: string | null) => {
         const response = await axiosInstance.post(
             `/api/v1/subject/create/${class_uuid}`,
             {
                 name,
                 description,
+                teacher_uuid,
             }
         );
         const data = response.data;
@@ -62,13 +63,14 @@ export const useSubject = () => {
         }
     };
 
-    const update = async (subject_uuid: string, class_uuid: string, name: string, description?: string) => {
+    const update = async (subject_uuid: string, class_uuid: string, name: string, description?: string, teacher_uuid?: string | null) => {
         const response = await axiosInstance.patch(
             `/api/v1/subject/update/${subject_uuid}`,
             {
                 name,
                 class_uuid,
                 description,
+                teacher_uuid,
             }
         );
         const data = response.data;

@@ -1,6 +1,6 @@
 'use client';
 
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import Cookies from 'js-cookie';
 import {Loader2} from 'lucide-react';
 
@@ -15,8 +15,13 @@ import {AuthCard} from '@/components/auth/auth-card';
 export default function OAuthAuthorizePage() {
     const [error, setError] = useState<string | null>(null);
     const [appName, setAppName] = useState<string | null>(null);
+    // Approve once: a second call (React runs effects twice in development)
+    // makes a second code and a second redirect, and the app may reject one.
+    const started = useRef(false);
 
     useEffect(() => {
+        if (started.current) return;
+        started.current = true;
         const here = window.location.pathname + window.location.search;
         const user = JSON.parse(Cookies.get('user') || 'null');
         if (!user || !Cookies.get('token')) {
