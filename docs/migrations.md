@@ -51,5 +51,7 @@ bunx prisma migrate status
 Step 3's `< '20261121'` matches exactly the 33 old migration names (all
 dated up to 2026-11-20); check the list from step 1 before running it.
 
-The local development database (`penlumen_sms`) has already been switched
-this way.
+Already switched this way: the local development database and production
+(both named `penlumen_sms`), on 2026-11-24. Production's old history rows
+were saved first, to
+`apps/api/prisma/prod-migration-history-before-baseline.json`.

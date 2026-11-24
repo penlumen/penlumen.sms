@@ -14,7 +14,7 @@
  *   bursar     bursar@demo.test
  *   teachers   teacher1@demo.test ... teacher8@demo.test
  *   parents    parent1@demo.test ... parent24@demo.test
- *   students   their reg number + PIN 1234 (student portal)
+ *   students   their reg number + PIN 123456 (student portal)
  *
  * The school's token is SEED_SCHOOL_TOKEN or, if unset, NEXT_PUBLIC_SCHOOL_TOKEN
  * from apps/web/.env, so the local web app opens straight onto the demo school.
@@ -37,7 +37,7 @@ const prisma = new PrismaClient({
 
 const SLUG = 'demo';
 const PASSWORD = process.env.SEED_PASSWORD || 'password';
-const STUDENT_PIN = '1234';
+const STUDENT_PIN = '123456';
 const STUDENTS_PER_CLASS = 8;
 
 // ---------- helpers ----------
