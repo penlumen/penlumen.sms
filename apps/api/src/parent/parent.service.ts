@@ -69,10 +69,18 @@ export class ParentService {
     return ward ?? this.notFound('Child not found');
   }
 
-  private balance(invoice: { status: string; total: unknown; paid: unknown }) {
+  private balance(invoice: {
+    status: string;
+    total: unknown;
+    discount: unknown;
+    paid: unknown;
+  }) {
     if (invoice.status === 'CANCELLED' || invoice.status === 'REFUNDED')
       return 0;
-    return Math.max(0, Number(invoice.total) - Number(invoice.paid));
+    return Math.max(
+      0,
+      Number(invoice.total) - Number(invoice.discount) - Number(invoice.paid),
+    );
   }
 
   // ---------- Home ----------
@@ -103,7 +111,13 @@ export class ParentService {
           },
         },
         invoices: {
-          select: { status: true, total: true, paid: true, due_at: true },
+          select: {
+            status: true,
+            total: true,
+            discount: true,
+            paid: true,
+            due_at: true,
+          },
         },
       },
     });
@@ -279,6 +293,7 @@ export class ParentService {
         number: true,
         status: true,
         total: true,
+        discount: true,
         paid: true,
         issued_at: true,
         due_at: true,

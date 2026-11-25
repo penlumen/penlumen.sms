@@ -1,5 +1,5 @@
 import type {InvoiceDetail} from '@/hooks/billing';
-import {INVOICE_STATUS_LABEL, naira, toNumber} from '@/hooks/billing';
+import {balanceOf, INVOICE_STATUS_LABEL, naira, toNumber} from '@/hooks/billing';
 import {cn} from '@/lib/utils';
 import {formatPhoneInternational} from '@/lib/phone';
 import {formatDate} from '@/lib/date';
@@ -19,7 +19,8 @@ export function InvoiceDocument({invoice, className}: { invoice: InvoiceDetail; 
 
     const subtotal = invoice.items.reduce((sum, item) => sum + toNumber(item.amount) * item.quantity, 0);
     const paid = toNumber(invoice.paid);
-    const due = invoice.status === 'CANCELLED' ? 0 : Math.max(0, toNumber(invoice.total) - paid);
+    const discount = toNumber(invoice.discount);
+    const due = invoice.status === 'CANCELLED' ? 0 : balanceOf(invoice);
 
     return (
         <article
@@ -100,6 +101,7 @@ export function InvoiceDocument({invoice, className}: { invoice: InvoiceDetail; 
                         ['Subtotal', naira(subtotal)],
                         ['Tax (0%)', naira(0)],
                         ['Total', naira(invoice.total)],
+                        ...(discount > 0 ? [['Discount', `− ${naira(discount)}`]] : []),
                         ...(paid > 0 ? [['Paid', `− ${naira(paid)}`]] : []),
                     ].map(([label, value]) => (
                         <div key={label} className='flex justify-between border-b border-[#e7e7e7] py-3'>

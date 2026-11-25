@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import {ChevronRight} from 'lucide-react';
 
-import {naira, toNumber} from '@/hooks/billing';
+import {balanceOf, naira} from '@/hooks/billing';
 import type {ParentInvoice} from '@/hooks/parent';
 import {InvoiceStatusBadge} from '@/components/app/billing-ui';
 import {formatDate} from '@/lib/date';
@@ -22,7 +22,7 @@ export function ParentInvoiceList({invoices, showStudent = true}: { invoices: Pa
         <ul className='divide-y divide-border overflow-hidden rounded-[10px] border border-border'>
             {invoices.map((invoice) => {
                 const closed = invoice.status === 'CANCELLED' || invoice.status === 'REFUNDED';
-                const balance = closed ? 0 : Math.max(0, toNumber(invoice.total) - toNumber(invoice.paid));
+                const balance = closed ? 0 : balanceOf(invoice);
                 const due = invoice.due_at ? formatDate(invoice.due_at) : null;
                 return (
                     <li key={invoice.uuid}>

@@ -577,6 +577,9 @@ model Invoice {
   calendar_uuid String?
   status        InvoiceStatus @default(PENDING)
   total         Decimal       @db.Decimal(12, 2)
+  /// Taken off the total, given with payments. What's owed is
+  /// total - discount - paid.
+  discount      Decimal       @default(0) @db.Decimal(12, 2)
   paid          Decimal       @default(0) @db.Decimal(12, 2)
   issued_at     DateTime      @default(now()) @db.Date
   due_at        DateTime?     @db.Date
@@ -592,6 +595,11 @@ model Invoice {
   payments OnlinePayment[]
   class    Class?                @relation(fields: [class_uuid], references: [uuid], onUpdate: Cascade, onDelete: SetNull)
   calendar Calendar?             @relation(fields: [calendar_uuid], references: [uuid], onUpdate: Cascade, onDelete: SetNull)
+
+  // One live (not cancelled) invoice per student, template and term: the
+  // partial unique index "Invoice_one_per_student_template_term" in the
+  // migrations (Prisma's schema can't express partial indexes). Billing a
+  // template again for the same term updates that invoice.
 }
 
 // Line items are copied from the template, so later template edits never change issued invoices.
@@ -613,6 +621,8 @@ model InvoiceStatusChange {
   invoice_uuid    String
   status          InvoiceStatus
   amount          Decimal       @default(0) @db.Decimal(12, 2)
+  /// Discount given with this change.
+  discount        Decimal       @default(0) @db.Decimal(12, 2)
   description     String?
   created_by_uuid String?
   created_at      DateTime      @default(now())

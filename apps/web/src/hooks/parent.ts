@@ -42,6 +42,7 @@ export interface ParentInvoice {
     number: string;
     status: InvoiceStatus;
     total: string | number;
+    discount?: string | number;
     paid: string | number;
     issued_at: string;
     due_at: string | null;

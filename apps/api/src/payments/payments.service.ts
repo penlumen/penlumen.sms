@@ -227,7 +227,9 @@ export class PaymentsService {
       (sum, p) => sum.plus(p.amount),
       new Prisma.Decimal(0),
     );
+    // Discounts the school gave come off what's owed.
     const balance = new Prisma.Decimal(invoice.total)
+      .minus(invoice.discount)
       .minus(invoice.paid)
       .minus(awaiting);
     if (balance.lte(0)) {
@@ -620,7 +622,10 @@ export class PaymentsService {
         invoice: { include: { student: { select: { name: true } } } },
       },
     });
-    const total = new Prisma.Decimal(payment.invoice.total);
+    // What's owed once discounts are taken off.
+    const total = new Prisma.Decimal(payment.invoice.total).minus(
+      payment.invoice.discount,
+    );
     const paid = new Prisma.Decimal(payment.invoice.paid).plus(payment.amount);
     const status = paid.gte(total) ? 'FULL_PAYMENT' : 'PART_PAYMENT';
 

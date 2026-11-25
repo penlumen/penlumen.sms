@@ -7,6 +7,7 @@ import {toast} from 'sonner';
 import {Ban, CheckCircle2, ChevronLeft, ChevronRight, MoreVertical, Plus, Search, Trash2, Upload} from 'lucide-react';
 
 import {
+    balanceOf,
     INVOICE_STATUS_LABEL,
     type InvoiceListItem,
     type InvoiceStatus,
@@ -136,7 +137,7 @@ export default function InvoicesPage() {
         const paid = scoped.reduce((s, i) => s + toNumber(i.paid), 0);
         const outstanding = active
             .filter((i) => i.status !== 'REFUNDED')
-            .reduce((s, i) => s + Math.max(0, toNumber(i.total) - toNumber(i.paid)), 0);
+            .reduce((s, i) => s + balanceOf(i), 0);
         return {billed, paid, outstanding};
     }, [scoped]);
 
@@ -408,7 +409,11 @@ export default function InvoicesPage() {
             <CreateInvoiceSheet
                 open={createOpen}
                 onOpenChange={setCreateOpen}
-                onCreated={(created) => setInvoices((current) => [...created, ...(current || [])])}
+                onCreated={(saved) => setInvoices((current) => {
+                    // Billing again returns the existing invoices too (updated or not): replace their rows.
+                    const uuids = new Set(saved.map((i) => i.uuid));
+                    return [...saved, ...(current || []).filter((i) => !uuids.has(i.uuid))];
+                })}
             />
             <UpdateStatusSheet invoice={statusInvoice} onOpenChange={(open) => !open && setStatusInvoice(null)} onUpdated={replace}/>
 

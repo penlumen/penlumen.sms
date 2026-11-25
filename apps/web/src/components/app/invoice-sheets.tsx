@@ -5,6 +5,7 @@ import {toast} from 'sonner';
 
 import {
     type BillingTemplate,
+    balanceOf,
     INVOICE_STATUS_LABEL,
     type InvoiceListItem,
     type InvoiceStatus,
@@ -61,29 +62,31 @@ export function CreateInvoiceSheet({
             const list = r.data.calendars || [];
             setTerms(list);
             // Bill the active term unless staff pick another (e.g. next term's fees sent early).
-            setCalendarUuid(list.find((c: { status: string }) => c.status === 'ACTIVE')?.uuid || '');
-        });
+            setCalendarUuid(list.find((c: { status: string }) => c.status === 'ACTIVE')?.uuid || '');        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
     const template = templates.find((t) => t.uuid === templateUuid);
     const total = template ? templateTotal(template) : 0;
+    const selectedTerm = terms.find((t) => t.uuid === calendarUuid);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!studentUuids.length) return toast.error('Choose at least one student');
         if (!templateUuid) return toast.error('Choose a billing template');
+        if (!calendarUuid) return toast.error('Choose the session and term to bill');
         setSaving(true);
         try {
             const response = await createInvoices({
                 student_uuids: studentUuids,
                 template_uuid: templateUuid,
-                calendar_uuid: calendarUuid || undefined,
+                calendar_uuid: calendarUuid,
                 due_at: dueAt || undefined,
                 note,
             });
             if (response.success) {
-                toast.success(response.data.invoices.length > 1 ? `${response.data.invoices.length} invoices created` : 'Invoice created');
+                // e.g. "3 invoices created, 1 invoice updated, 2 already up to date".
+                toast.success(response.message);
                 onCreated(response.data.invoices);
                 onOpenChange(false);
             } else {
@@ -119,23 +122,32 @@ export function CreateInvoiceSheet({
                             </SelectContent>
                         </Select>
                     </div>
-                    {terms.length > 0 && (
-                        <div className='space-y-2'>
-                            <Label htmlFor='invoice-term'>Term</Label>
-                            <Select value={calendarUuid} onValueChange={setCalendarUuid}>
-                                <SelectTrigger id='invoice-term' className='w-full'>
-                                    <SelectValue placeholder='Choose a term'/>
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {terms.map((t) => (
-                                        <SelectItem key={t.uuid} value={t.uuid}>
-                                            {termLabel(t)}{t.status === 'ACTIVE' ? ' (current)' : ''}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    )}
+                    <div className='space-y-2'>
+                        <Label htmlFor='invoice-term'>Session and term</Label>
+                        {/* Empty changes are ignored: the select can report one as it mounts, wiping the default term. */}
+                        <Select value={calendarUuid} onValueChange={(value) => value && setCalendarUuid(value)} disabled={!terms.length}>
+                            <SelectTrigger id='invoice-term' className='w-full'>
+                                {/* Named here: the current term is chosen before the list has ever opened. */}
+                                <SelectValue placeholder={terms.length ? 'Choose a term' : 'No terms yet'}>
+                                    {selectedTerm
+                                        ? `${termLabel(selectedTerm)}${selectedTerm.status === 'ACTIVE' ? ' (current)' : ''}`
+                                        : undefined}
+                                </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                                {terms.map((t) => (
+                                    <SelectItem key={t.uuid} value={t.uuid}>
+                                        {termLabel(t)}{t.status === 'ACTIVE' ? ' (current)' : ''}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <p className='text-xs text-muted-foreground'>
+                            {terms.length
+                                ? 'One invoice per student, template and term: billing them again updates it with the current fees.'
+                                : 'Add the session and term in Calendar first.'}
+                        </p>
+                    </div>
                     <div className='space-y-2'>
                         <Label htmlFor='invoice-due'>Due date (optional)</Label>
                         <DateField id='invoice-due' value={dueAt} onChange={setDueAt}/>
@@ -193,6 +205,7 @@ export function UpdateStatusSheet({
     const {updateStatus} = useBilling();
     const [status, setStatus] = useState<InvoiceStatus>('PENDING');
     const [amount, setAmount] = useState('');
+    const [discount, setDiscount] = useState('');
     const [description, setDescription] = useState('');
     const [saving, setSaving] = useState(false);
 
@@ -200,10 +213,15 @@ export function UpdateStatusSheet({
         if (!invoice) return;
         setStatus(invoice.status);
         setAmount('');
+        setDiscount('');
         setDescription('');
     }, [invoice]);
 
-    const balance = invoice ? toNumber(invoice.total) - toNumber(invoice.paid) : 0;
+    const balance = invoice ? balanceOf(invoice) : 0;
+    // A discount goes with a part or full payment, and comes off the balance.
+    const paying = status === 'PART_PAYMENT' || status === 'FULL_PAYMENT';
+    const discountValue = paying ? toNumber(discount.replace(/,/g, '')) : 0;
+    const balanceAfterDiscount = Math.max(0, balance - discountValue);
     const amountLabel =
         status === 'REFUNDED' ? 'Amount refunded' : status === 'PART_PAYMENT' || status === 'FULL_PAYMENT' ? 'Amount received' : 'Amount';
     const amountDisabled = status === 'PENDING' || status === 'CANCELLED';
@@ -216,6 +234,7 @@ export function UpdateStatusSheet({
             const response = await updateStatus(invoice.uuid, {
                 status,
                 amount: amountDisabled ? undefined : amount.replace(/,/g, ''),
+                discount: paying && discount ? discount.replace(/,/g, '') : undefined,
                 description,
             });
             if (response.success) {
@@ -240,18 +259,24 @@ export function UpdateStatusSheet({
                 </SheetHeader>
                 {invoice && (
                     <form onSubmit={handleSubmit} className='flex flex-col gap-5 px-4 pb-6'>
-                        <div className='grid grid-cols-3 gap-2 rounded-[10px] bg-muted/50 p-3 text-xs'>
+                        <div className={`grid gap-2 rounded-[10px] bg-muted/50 p-3 text-xs ${toNumber(invoice.discount) > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                             <div>
                                 <p className='text-muted-foreground'>Total</p>
                                 <p className='mt-0.5 text-sm font-medium'>{naira(invoice.total)}</p>
                             </div>
+                            {toNumber(invoice.discount) > 0 && (
+                                <div>
+                                    <p className='text-muted-foreground'>Discount</p>
+                                    <p className='mt-0.5 text-sm font-medium'>{naira(invoice.discount)}</p>
+                                </div>
+                            )}
                             <div>
                                 <p className='text-muted-foreground'>Paid</p>
                                 <p className='mt-0.5 text-sm font-medium'>{naira(invoice.paid)}</p>
                             </div>
                             <div>
                                 <p className='text-muted-foreground'>Balance</p>
-                                <p className='mt-0.5 text-sm font-medium'>{naira(Math.max(0, balance))}</p>
+                                <p className='mt-0.5 text-sm font-medium'>{naira(balance)}</p>
                             </div>
                         </div>
                         <div className='space-y-2'>
@@ -272,7 +297,7 @@ export function UpdateStatusSheet({
                                 <Input
                                     id='status-amount'
                                     inputMode='decimal'
-                                    placeholder={status === 'FULL_PAYMENT' ? String(Math.max(0, balance)) : '00'}
+                                    placeholder={status === 'FULL_PAYMENT' ? String(balanceAfterDiscount) : '00'}
                                     className='pl-7'
                                     disabled={amountDisabled}
                                     value={amount}
@@ -283,6 +308,29 @@ export function UpdateStatusSheet({
                                 <p className='text-xs text-muted-foreground'>Leave blank to record the outstanding balance as paid.</p>
                             )}
                         </div>
+                        {paying && (
+                            <div className='space-y-2'>
+                                <Label htmlFor='status-discount'>Discount (optional)</Label>
+                                <div className='relative'>
+                                    <span className='pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground'>₦</span>
+                                    <Input
+                                        id='status-discount'
+                                        inputMode='decimal'
+                                        placeholder='00'
+                                        className='pl-7'
+                                        value={discount}
+                                        onChange={(e) => setDiscount(e.target.value.replace(/[^\d.,]/g, ''))}
+                                    />
+                                </div>
+                                <p className='text-xs text-muted-foreground'>
+                                    {discountValue > balance
+                                        ? `At most ${naira(balance)}, the balance.`
+                                        : discountValue > 0
+                                            ? `Comes off the balance: ${naira(balanceAfterDiscount)} left to pay.`
+                                            : 'Taken off what the parent owes. It shows on the invoice.'}
+                                </p>
+                            </div>
+                        )}
                         <div className='space-y-2'>
                             <Label htmlFor='status-description'>Description</Label>
                             <Textarea

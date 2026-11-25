@@ -118,6 +118,38 @@ export class StudentsService {
    * The parent to link, if any: '' or null means none yet. Must be a parent
    * account in the same school.
    */
+  /**
+   * Adds a parent account (with access to the branch) for a student being
+   * added or edited. Their password is unknown to anyone: the invite email
+   * lets them choose their own.
+   */
+  private async createParent(
+    newParent: Awaited<ReturnType<StudentsService['checkNewParent']>>,
+    branchUuid: string,
+    schoolUuid: string,
+  ): Promise<string> {
+    const parent = await this.prisma.user.create({
+      data: {
+        ...newParent,
+        role: 'PARENT',
+        school_uuid: schoolUuid,
+        password: await this.hashing.createHash(
+          randomBytes(12).toString('base64url'),
+        ),
+        face_descriptor: [],
+      },
+    });
+    await this.prisma.branchAccess.create({
+      data: {
+        branch_uuid: branchUuid,
+        school_uuid: schoolUuid,
+        user_uuid: parent.uuid,
+        role: 'PARENT',
+      },
+    });
+    return parent.uuid;
+  }
+
   private async parentFor(value: unknown, schoolUuid: string) {
     if (value === undefined) return undefined;
     if (value === null || value === '') return null;
@@ -281,27 +313,11 @@ export class StudentsService {
 
     let createdParentUuid: string | null = null;
     if (newParent) {
-      const parent = await this.prisma.user.create({
-        data: {
-          ...newParent,
-          role: 'PARENT',
-          school_uuid: decoded.school_uuid,
-          // Unknown to anyone: the invite email lets them choose their own.
-          password: await this.hashing.createHash(
-            randomBytes(12).toString('base64url'),
-          ),
-          face_descriptor: [],
-        },
-      });
-      await this.prisma.branchAccess.create({
-        data: {
-          branch_uuid: branchUuid,
-          school_uuid: decoded.school_uuid,
-          user_uuid: parent.uuid,
-          role: 'PARENT',
-        },
-      });
-      createdParentUuid = parentUuid = parent.uuid;
+      createdParentUuid = parentUuid = await this.createParent(
+        newParent,
+        branchUuid,
+        decoded.school_uuid,
+      );
     }
 
     // Two students added at once can be given the same generated number;
@@ -418,7 +434,13 @@ export class StudentsService {
         message: 'Name, class and Registration number are required',
       });
     }
-    const parentUuid = await this.parentFor(parent_uuid, decoded.school_uuid);
+    // "New parent": add the parent along with the change, as when adding.
+    const newParent = body.new_parent
+      ? await this.checkNewParent(body.new_parent, decoded.school_uuid)
+      : null;
+    let parentUuid = newParent
+      ? null
+      : await this.parentFor(parent_uuid, decoded.school_uuid);
     const dateOfBirth = this.dateOfBirth(body.date_of_birth);
 
     if (!branchUuid) {
@@ -447,21 +469,43 @@ export class StudentsService {
     const previousStudent = await this.prisma.student.findUnique({
       where: { uuid },
     });
-    const result = await this.prisma.student.update({
-      where: { uuid },
-      data: {
-        name,
-        reg_number,
-        parent_uuid: parentUuid,
-        date_of_birth: dateOfBirth,
-        class_uuid,
-        gender,
-        avatar,
-        status,
-        ...(face_descriptor ? { face_descriptor } : {}),
-      },
-      include: { class: true },
-    });
+    let createdParentUuid: string | null = null;
+    if (newParent) {
+      createdParentUuid = parentUuid = await this.createParent(
+        newParent,
+        branchUuid,
+        decoded.school_uuid,
+      );
+    }
+    let result;
+    try {
+      result = await this.prisma.student.update({
+        where: { uuid },
+        data: {
+          name,
+          reg_number,
+          parent_uuid: parentUuid,
+          date_of_birth: dateOfBirth,
+          class_uuid,
+          gender,
+          avatar,
+          status,
+          ...(face_descriptor ? { face_descriptor } : {}),
+        },
+        include: { class: true },
+      });
+    } catch (error) {
+      // Don't leave a parent behind for a change that didn't save.
+      if (createdParentUuid) {
+        await this.prisma.user
+          .delete({ where: { uuid: createdParentUuid } })
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+    if (createdParentUuid) {
+      void this.passwords.sendInvite(createdParentUuid).catch(() => undefined);
+    }
 
     if (previousStudent && previousStudent.class_uuid !== result.class_uuid) {
       await this.notifications.notifyUsers(
