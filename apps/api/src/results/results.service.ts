@@ -369,6 +369,66 @@ export class ResultsService {
     };
   }
 
+  /**
+   * Generates (or refreshes) reports for several students for one term,
+   * one at a time through create(), so each student's access check and
+   * subject list apply as when done singly. One student failing doesn't
+   * stop the rest; the counts say how it went.
+   */
+  async bulkCreate(
+    studentUuids: unknown,
+    decoded: DecodedUser,
+    calendarUuid?: string,
+  ) {
+    const uuids = Array.isArray(studentUuids)
+      ? [
+          ...new Set(
+            studentUuids.filter(
+              (u): u is string => typeof u === 'string' && !!u,
+            ),
+          ),
+        ]
+      : [];
+    if (!uuids.length || uuids.length > 200) {
+      throw new BadRequestException({
+        status: 400,
+        success: false,
+        message: 'Choose from 1 to 200 students',
+      });
+    }
+
+    let created = 0;
+    let refreshed = 0;
+    const failed: { student_uuid: string; message: string }[] = [];
+    for (const uuid of uuids) {
+      try {
+        const response = await this.create(uuid, decoded, calendarUuid);
+        if (response.status === 201) created++;
+        else refreshed++;
+      } catch (error: any) {
+        // The term is the same for everyone: if it's missing, stop here.
+        if (error instanceof BadRequestException) throw error;
+        failed.push({
+          student_uuid: uuid,
+          message:
+            error?.response?.message || error?.message || 'Could not generate',
+        });
+      }
+    }
+
+    const parts = [
+      created && `${created} ${created === 1 ? 'report' : 'reports'} generated`,
+      refreshed && `${refreshed} refreshed`,
+      failed.length && `${failed.length} failed`,
+    ].filter(Boolean);
+    return {
+      status: created ? 201 : 200,
+      success: failed.length < uuids.length,
+      message: parts.join(', '),
+      data: { created, refreshed, failed },
+    };
+  }
+
   async create(
     studentUuid: string,
     decoded: DecodedUser,

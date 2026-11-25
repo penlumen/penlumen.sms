@@ -53,6 +53,19 @@ export class ResultsController {
     return this.resultsService.show(studentUuid, user);
   }
 
+  /** Reports for several students at once (e.g. those picked in a class). */
+  @Post('bulk-create')
+  bulkCreate(
+    @CurrentUser() user: DecodedUser,
+    @Body() body: { student_uuids?: unknown; calendar_uuid?: string },
+  ) {
+    return this.resultsService.bulkCreate(
+      body?.student_uuids,
+      user,
+      body?.calendar_uuid,
+    );
+  }
+
   @Post('create/:student_uuid')
   create(
     @Param('student_uuid') studentUuid: string,

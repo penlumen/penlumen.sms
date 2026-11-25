@@ -3,10 +3,14 @@
 import {useEffect, useState} from 'react';
 import {useParams, useRouter} from 'next/navigation';
 import {toast} from 'sonner';
-import {ArrowDown, ArrowLeft, ArrowUp, Eye, GripVertical, MoreVertical, Plus, Search} from 'lucide-react';
+import {ArrowDown, ArrowLeft, ArrowUp, Eye, FileText, GripVertical, MoreVertical, Plus, Search} from 'lucide-react';
 
 import {useClass} from '@/hooks/class';
 import {useSubject} from '@/hooks/subject';
+import {useResult} from '@/hooks/result';
+import {useCalendar} from '@/hooks/calendar';
+import {Checkbox} from '@/components/ui/checkbox';
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
 import {Avatar, AvatarFallback, AvatarImage} from '@/components/ui/avatar';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
@@ -56,6 +60,23 @@ export default function ClassDetailPage() {
     const [dragging, setDragging] = useState<string | null>(null);
     const [savingOrder, setSavingOrder] = useState(false);
     const [studentSearch, setStudentSearch] = useState('');
+    // Students picked for generating reports in one go.
+    const [picked, setPicked] = useState<Set<string>>(new Set());
+    const [terms, setTerms] = useState<{ uuid: string; session: string; term: string | null; status: string }[]>([]);
+    const [reportTerm, setReportTerm] = useState('');
+    const [generating, setGenerating] = useState(false);
+    const {bulkCreate} = useResult();
+    const {index: indexTerms} = useCalendar();
+
+    useEffect(() => {
+        indexTerms().then((r) => {
+            if (!r.success) return;
+            const list = r.data.calendars || [];
+            setTerms(list);
+            setReportTerm((current) => current || list.find((c: { status: string }) => c.status === 'ACTIVE')?.uuid || '');
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     const [subjectSearch, setSubjectSearch] = useState('');
 
     const [studentFormOpen, setStudentFormOpen] = useState(false);
@@ -114,6 +135,41 @@ export default function ClassDetailPage() {
     const filteredStudents = students.filter((s) =>
         !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase())
     );
+    const allShownPicked = filteredStudents.length > 0 && filteredStudents.every((s) => picked.has(s.uuid));
+    const togglePicked = (uuid: string, on: boolean) =>
+        setPicked((current) => {
+            const next = new Set(current);
+            if (on) next.add(uuid);
+            else next.delete(uuid);
+            return next;
+        });
+    const toggleAllShown = (on: boolean) =>
+        setPicked((current) => {
+            const next = new Set(current);
+            filteredStudents.forEach((s) => (on ? next.add(s.uuid) : next.delete(s.uuid)));
+            return next;
+        });
+    const selectedReportTerm = terms.find((t) => t.uuid === reportTerm);
+
+    const generateReports = async () => {
+        if (!picked.size || !reportTerm) return;
+        setGenerating(true);
+        try {
+            const response = await bulkCreate([...picked], reportTerm);
+            if (response.success) {
+                const failed = response.data?.failed?.length ?? 0;
+                if (failed) toast.warning(response.message);
+                else toast.success(response.message);
+                setPicked(new Set());
+            } else {
+                toast.error(response.message);
+            }
+        } catch (error: any) {
+            toast.error(error?.response?.data?.message || error.message || 'Could not generate reports');
+        } finally {
+            setGenerating(false);
+        }
+    };
     /** Moves a subject and saves the new order; puts it back if saving fails. */
     const moveSubject = async (uuid: string, toIndex: number) => {
         const from = subjects.findIndex((s) => s.uuid === uuid);
@@ -205,10 +261,47 @@ export default function ClassDetailPage() {
                         </Button>
                     </div>
 
+                    {picked.size > 0 && (
+                        <div className='flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm'>
+                            <span className='font-medium'>{picked.size} selected</span>
+                            <Select value={reportTerm} onValueChange={(value) => value && setReportTerm(value)}>
+                                <SelectTrigger className='h-8 w-56' aria-label='Term to generate reports for'>
+                                    <SelectValue placeholder='Choose a term'>
+                                        {selectedReportTerm
+                                            ? `${selectedReportTerm.session} - ${selectedReportTerm.term ?? ''}${selectedReportTerm.status === 'ACTIVE' ? ' (Active)' : ''}`
+                                            : undefined}
+                                    </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {terms.map((t) => (
+                                        <SelectItem key={t.uuid} value={t.uuid}>
+                                            {t.session} - {t.term}{t.status === 'ACTIVE' ? ' (Active)' : ''}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button size='sm' disabled={generating || !reportTerm} onClick={generateReports}>
+                                <FileText className='h-4 w-4'/>
+                                {generating ? 'Generating...' : `Generate ${picked.size === 1 ? 'report' : 'reports'}`}
+                            </Button>
+                            <Button size='sm' variant='ghost' disabled={generating} onClick={() => setPicked(new Set())}>
+                                Clear
+                            </Button>
+                            <span className='text-xs text-muted-foreground'>Existing reports for the term are refreshed, not duplicated.</span>
+                        </div>
+                    )}
+
                     <div className='overflow-x-auto rounded-md border'>
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className='w-10'>
+                                        <Checkbox
+                                            aria-label='Select all students shown'
+                                            checked={allShownPicked}
+                                            onCheckedChange={(checked) => toggleAllShown(checked === true)}
+                                        />
+                                    </TableHead>
                                     <TableHead>Name</TableHead>
                                     <TableHead>Parent</TableHead>
                                     <TableHead>Gender</TableHead>
@@ -219,13 +312,20 @@ export default function ClassDetailPage() {
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className='h-24 text-center text-muted-foreground'>
+                                        <TableCell colSpan={6} className='h-24 text-center text-muted-foreground'>
                                             No students found.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
                                     filteredStudents.map((student) => (
-                                        <TableRow key={student.uuid}>
+                                        <TableRow key={student.uuid} data-state={picked.has(student.uuid) ? 'selected' : undefined}>
+                                            <TableCell>
+                                                <Checkbox
+                                                    aria-label={`Select ${student.name}`}
+                                                    checked={picked.has(student.uuid)}
+                                                    onCheckedChange={(checked) => togglePicked(student.uuid, checked === true)}
+                                                />
+                                            </TableCell>
                                             <TableCell className='font-medium'>
                                                 <div className='flex items-center gap-2'>
                                                     <Avatar className='h-8 w-8'>
