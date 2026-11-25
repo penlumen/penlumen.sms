@@ -26,6 +26,8 @@ export interface InvoiceListItem {
     number: string;
     status: InvoiceStatus;
     total: Money;
+    /** Taken off the total (given with payments). */
+    discount?: Money;
     paid: Money;
     issued_at: string;
     due_at: string | null;
@@ -89,6 +91,10 @@ export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
 
 export const toNumber = (value: Money | null | undefined) => Number(value ?? 0) || 0;
 
+/** What's still owed: the total less discounts and payments (never below 0). */
+export const balanceOf = (invoice: { total: Money; discount?: Money | null; paid: Money }) =>
+    Math.max(0, toNumber(invoice.total) - toNumber(invoice.discount) - toNumber(invoice.paid));
+
 /** ₦89,000 (kobo shown only when present). */
 export const naira = (value: Money | null | undefined) => {
     const amount = toNumber(value);
@@ -120,7 +126,7 @@ export const useBilling = () => {
     const invoice = async (uuid: string) => unwrap((await axiosInstance.get(`/api/v1/invoice/show/${uuid}`)).data);
     const createInvoices = async (payload: InvoicePayload) =>
         unwrap((await axiosInstance.post('/api/v1/invoice/create', payload)).data);
-    const updateStatus = async (uuid: string, payload: { status: InvoiceStatus; amount?: string; description?: string }) =>
+    const updateStatus = async (uuid: string, payload: { status: InvoiceStatus; amount?: string; discount?: string; description?: string }) =>
         unwrap((await axiosInstance.patch(`/api/v1/invoice/status/${uuid}`, payload)).data);
     const removeInvoice = async (uuid: string) =>
         unwrap((await axiosInstance.delete(`/api/v1/invoice/delete/${uuid}`)).data);

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -348,6 +349,102 @@ export class BillingService {
     return term?.uuid ?? null;
   }
 
+  /** Whether a unique-index error is the one-invoice-per-template-and-term rule. */
+  private onePerTermClash(error: any): boolean {
+    const target = JSON.stringify(error?.meta ?? '');
+    return (
+      target.includes('one_per_student_template_term') ||
+      (target.includes('template_uuid') && target.includes('calendar_uuid'))
+    );
+  }
+
+  /** Whether an invoice's lines are the same fees, in the same order. */
+  private sameFees(
+    lines: { description: string; amount: Prisma.Decimal; quantity: number }[],
+    items: ItemInput[],
+  ): boolean {
+    return (
+      lines.length === items.length &&
+      lines.every(
+        (line, i) =>
+          line.description === items[i].description &&
+          line.quantity === items[i].quantity &&
+          new Prisma.Decimal(line.amount).equals(items[i].amount),
+      )
+    );
+  }
+
+  /**
+   * Billing a template again for the same term: the invoice takes the new
+   * fees (and due date or note, when given). What's paid stays; the status
+   * follows from it, and the change goes in the history.
+   */
+  private async refreshFees(
+    invoice: {
+      uuid: string;
+      status: InvoiceStatus;
+      total: Prisma.Decimal;
+      discount: Prisma.Decimal;
+      paid: Prisma.Decimal;
+    },
+    items: ItemInput[],
+    total: Prisma.Decimal,
+    dueAt: Date | null,
+    note: string | null,
+    decoded: DecodedUser,
+  ) {
+    const paid = new Prisma.Decimal(invoice.paid);
+    // A discount can't come to more than the new total.
+    const discount = Prisma.Decimal.min(invoice.discount, total);
+    const due = total.minus(discount);
+    let status = invoice.status;
+    if (status !== 'REFUNDED') {
+      status =
+        paid.gte(due) && due.gt(0)
+          ? 'FULL_PAYMENT'
+          : paid.gt(0)
+            ? 'PART_PAYMENT'
+            : 'PENDING';
+    }
+    const before = `₦${Number(invoice.total).toLocaleString('en-NG')}`;
+    const after = `₦${Number(total).toLocaleString('en-NG')}`;
+    await this.prisma.$transaction([
+      this.prisma.invoiceItem.deleteMany({
+        where: { invoice_uuid: invoice.uuid },
+      }),
+      this.prisma.invoiceItem.createMany({
+        data: items.map((item, position) => ({
+          invoice_uuid: invoice.uuid,
+          description: item.description,
+          amount: item.amount,
+          quantity: item.quantity,
+          position,
+        })),
+      }),
+      this.prisma.invoice.update({
+        where: { uuid: invoice.uuid },
+        data: {
+          total,
+          discount,
+          status,
+          ...(dueAt ? { due_at: dueAt } : {}),
+          ...(note ? { note } : {}),
+        },
+      }),
+      this.prisma.invoiceStatusChange.create({
+        data: {
+          invoice_uuid: invoice.uuid,
+          status,
+          description:
+            before === after
+              ? 'Invoice updated'
+              : `Fees updated: ${before} → ${after}`,
+          created_by_uuid: decoded.uuid,
+        },
+      }),
+    ]);
+  }
+
   private async findInvoice(uuid: string, branchUuid: string) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { uuid, branch_uuid: branchUuid },
@@ -514,12 +611,50 @@ export class BillingService {
     const dueAt = this.date(body?.due_at);
     const note = this.text(body?.note, 500);
     const calendarUuid = await this.termFor(branch, body?.calendar_uuid);
+    if (!calendarUuid) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        success: false,
+        message:
+          'Choose the session and term to bill. Add one in Calendar if the branch has none.',
+      });
+    }
+
+    // A template is billed once per student and term: billing it again
+    // updates that invoice (its fees, when they changed) instead of adding
+    // another. Cancelled invoices don't count.
+    const existing = templateUuid
+      ? await this.prisma.invoice.findMany({
+          where: {
+            template_uuid: templateUuid,
+            calendar_uuid: calendarUuid,
+            student_uuid: { in: studentUuids },
+            status: { not: 'CANCELLED' },
+          },
+          include: { items: { orderBy: { position: 'asc' } } },
+        })
+      : [];
+    const updatedUuids: string[] = [];
+    const unchangedUuids: string[] = [];
+    for (const invoice of existing) {
+      if (
+        this.sameFees(invoice.items, items) &&
+        (dueAt === null || invoice.due_at?.getTime() === dueAt.getTime())
+      ) {
+        unchangedUuids.push(invoice.uuid);
+        continue;
+      }
+      await this.refreshFees(invoice, items, total, dueAt, note, decoded);
+      updatedUuids.push(invoice.uuid);
+    }
+    const alreadyBilled = new Set(existing.map((i) => i.student_uuid));
+    const toCreate = students.filter((s) => !alreadyBilled.has(s.uuid));
 
     // Ids are generated here so invoices, their lines and history can be
     // written as three flat inserts in one batched transaction (a single
     // request). See updateTemplate for why this avoids interactive ones.
     const insert = () => {
-      const rows = students.map((student) => ({
+      const rows = toCreate.map((student) => ({
         uuid: randomUUID(),
         number: this.newInvoiceNumber(),
         branch_uuid: branch,
@@ -558,11 +693,20 @@ export class BillingService {
     };
 
     let createdUuids: string[] = [];
-    for (let attempt = 1; ; attempt++) {
+    for (let attempt = 1; toCreate.length; attempt++) {
       try {
         createdUuids = await insert();
         break;
       } catch (error: any) {
+        if (error?.code === 'P2002' && this.onePerTermClash(error)) {
+          // Billed at the same moment by someone else.
+          throw new ConflictException({
+            status: 409,
+            success: false,
+            message:
+              'Some of these students were just billed with this template for this term. Try again to update their invoices.',
+          });
+        }
         // Invoice number clash: extremely unlikely, so simply try again.
         if (error?.code === 'P2002' && attempt < 3) continue;
         throw error;
@@ -570,31 +714,61 @@ export class BillingService {
     }
 
     const invoices = await this.prisma.invoice.findMany({
-      where: { uuid: { in: createdUuids } },
+      where: {
+        uuid: { in: [...createdUuids, ...updatedUuids, ...unchangedUuids] },
+      },
       orderBy: { created_at: 'desc' },
       include: this.invoiceListInclude,
     });
 
+    const naira = `₦${Number(total).toLocaleString('en-NG')}`;
     for (const invoice of invoices) {
       const student = students.find((s) => s.uuid === invoice.student_uuid)!;
-      await this.notifications.notifyUsers(
-        [student.parent_uuid],
-        branch,
-        'INVOICE_CREATED',
-        'New invoice',
-        `Invoice ${invoice.number} for ${student.name} has been issued (₦${Number(total).toLocaleString('en-NG')}).`,
-        { excludeUuid: decoded.uuid },
-      );
+      if (createdUuids.includes(invoice.uuid)) {
+        await this.notifications.notifyUsers(
+          [student.parent_uuid],
+          branch,
+          'INVOICE_CREATED',
+          'New invoice',
+          `Invoice ${invoice.number} for ${student.name} has been issued (${naira}).`,
+          { excludeUuid: decoded.uuid },
+        );
+      } else if (updatedUuids.includes(invoice.uuid)) {
+        await this.notifications.notifyUsers(
+          [student.parent_uuid],
+          branch,
+          'INVOICE_UPDATED',
+          'Invoice updated',
+          `Invoice ${invoice.number} for ${student.name} has been updated (${naira}).`,
+          { excludeUuid: decoded.uuid },
+        );
+      }
     }
 
+    const count = (n: number, one: string, many: string) =>
+      n === 1 ? `1 ${one}` : `${n} ${many}`;
+    const parts = [
+      createdUuids.length &&
+        count(createdUuids.length, 'invoice created', 'invoices created'),
+      updatedUuids.length &&
+        count(updatedUuids.length, 'invoice updated', 'invoices updated'),
+      unchangedUuids.length &&
+        count(
+          unchangedUuids.length,
+          'already up to date',
+          'already up to date',
+        ),
+    ].filter(Boolean);
     return {
-      status: 201,
+      status: createdUuids.length ? 201 : 200,
       success: true,
-      message:
-        invoices.length > 1
-          ? `${invoices.length} invoices created`
-          : 'Invoice created',
-      data: { invoices },
+      message: parts.join(', '),
+      data: {
+        invoices,
+        created: createdUuids,
+        updated: updatedUuids,
+        unchanged: unchangedUuids,
+      },
     };
   }
 
@@ -624,11 +798,28 @@ export class BillingService {
       });
     }
 
-    const needsAmount = status === 'PART_PAYMENT' || status === 'REFUNDED';
     const amount =
       body?.amount === undefined || body?.amount === null || body?.amount === ''
         ? new Prisma.Decimal(0)
         : this.money(body.amount);
+    // A discount comes off what's owed; it goes with a payment.
+    const discount =
+      body?.discount === undefined ||
+      body?.discount === null ||
+      body?.discount === ''
+        ? new Prisma.Decimal(0)
+        : this.money(body.discount, 'Discount');
+    const paying = status === 'PART_PAYMENT' || status === 'FULL_PAYMENT';
+    if (discount.gt(0) && !paying) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        success: false,
+        message: 'A discount is given with a part or full payment',
+      });
+    }
+    // A part payment needs an amount, unless it's a discount on its own.
+    const needsAmount =
+      (status === 'PART_PAYMENT' && discount.lte(0)) || status === 'REFUNDED';
     if (needsAmount && amount.lte(0)) {
       throw new UnprocessableEntityException({
         status: 422,
@@ -639,15 +830,25 @@ export class BillingService {
 
     const total = new Prisma.Decimal(existing.total);
     let paid = new Prisma.Decimal(existing.paid);
+    const totalDiscount = new Prisma.Decimal(existing.discount).plus(discount);
+    // What's owed once discounts are taken off.
+    const due = total.minus(totalDiscount);
+    if (discount.gt(0) && totalDiscount.gt(total.minus(paid))) {
+      throw new UnprocessableEntityException({
+        status: 422,
+        success: false,
+        message: "The discount can't be more than the balance",
+      });
+    }
     let recorded = amount;
 
     if (status === 'PART_PAYMENT') {
       paid = paid.plus(amount);
-      if (paid.gte(total)) status = 'FULL_PAYMENT';
+      if (paid.gte(due)) status = 'FULL_PAYMENT';
     } else if (status === 'FULL_PAYMENT') {
       // Paying in full settles the balance; record what was actually outstanding.
-      recorded = amount.gt(0) ? amount : total.minus(paid);
-      paid = total;
+      recorded = amount.gt(0) ? amount : Prisma.Decimal.max(due.minus(paid), 0);
+      paid = Prisma.Decimal.max(due, paid);
     } else if (status === 'REFUNDED') {
       if (amount.gt(paid)) {
         throw new UnprocessableEntityException({
@@ -659,22 +860,38 @@ export class BillingService {
       paid = paid.minus(amount);
     }
 
-    const invoice = await this.prisma.invoice.update({
-      where: { uuid },
-      data: {
-        status,
-        paid,
-        history: {
-          create: {
-            status,
-            amount: recorded,
-            description: this.text(body?.description, 300),
-            created_by_uuid: decoded.uuid,
+    const invoice = await this.prisma.invoice
+      .update({
+        where: { uuid },
+        data: {
+          status,
+          paid,
+          discount: totalDiscount,
+          history: {
+            create: {
+              status,
+              amount: recorded,
+              discount,
+              description: this.text(body?.description, 300),
+              created_by_uuid: decoded.uuid,
+            },
           },
         },
-      },
-      include: this.invoiceListInclude,
-    });
+        include: this.invoiceListInclude,
+      })
+      .catch((error: any) => {
+        // Reopening a cancelled invoice when the student has since been
+        // billed again for that term.
+        if (error?.code === 'P2002' && this.onePerTermClash(error)) {
+          throw new ConflictException({
+            status: 409,
+            success: false,
+            message:
+              'This student already has another invoice from this template for this term. Cancel that one first.',
+          });
+        }
+        throw error;
+      });
 
     return {
       status: 200,

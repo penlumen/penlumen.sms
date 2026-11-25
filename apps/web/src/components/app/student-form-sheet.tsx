@@ -153,7 +153,7 @@ export function StudentFormSheet({open, onOpenChange, student, lockedClassUuid, 
                 ...formData,
                 // Untouched suggestion: let the server take the next free number at save time.
                 ...(!isEdit && suggested && formData.reg_number.trim() === suggested ? {reg_number: ''} : {}),
-                ...(!isEdit && newParent
+                ...(newParent
                     ? {parent_uuid: '', new_parent: {...parentData, name: parentData.name.trim(), email: parentData.email.trim()}}
                     : {}),
                 ...(entityUuid ? {uuid: entityUuid} : {}),
@@ -271,18 +271,16 @@ export function StudentFormSheet({open, onOpenChange, student, lockedClassUuid, 
                     <div className='space-y-2'>
                         <div className='flex items-center justify-between gap-2'>
                             <Label>Parent/guardian</Label>
-                            {!isEdit && (
-                                <label className='flex items-center gap-2 text-sm'>
-                                    <Checkbox
-                                        id='new-parent'
-                                        checked={newParent}
-                                        onCheckedChange={(checked) => setNewParent(checked === true)}
-                                    />
-                                    New parent
-                                </label>
-                            )}
+                            <label className='flex items-center gap-2 text-sm'>
+                                <Checkbox
+                                    id='new-parent'
+                                    checked={newParent}
+                                    onCheckedChange={(checked) => setNewParent(checked === true)}
+                                />
+                                New parent
+                            </label>
                         </div>
-                        {newParent && !isEdit ? (
+                        {newParent ? (
                             <div className='space-y-3 rounded-[10px] border border-border p-3'>
                                 <div className='space-y-1.5'>
                                     <Label htmlFor='new-parent-name' className='text-xs'>Full name</Label>
@@ -327,7 +325,9 @@ export function StudentFormSheet({open, onOpenChange, student, lockedClassUuid, 
                                     </Select>
                                 </div>
                                 <p className='text-xs text-muted-foreground'>
-                                    The parent is added with the student and emailed a link to set their password.
+                                    {isEdit
+                                        ? 'The parent is added when you save, linked to this student, and emailed a link to set their password.'
+                                        : 'The parent is added with the student and emailed a link to set their password.'}
                                 </p>
                             </div>
                         ) : (

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {useParams} from 'next/navigation';
 import {ArrowLeft, Clock3, CreditCard, Printer, XCircle} from 'lucide-react';
 
-import {INVOICE_STATUS_LABEL, type InvoiceDetail, naira, toNumber} from '@/hooks/billing';
+import {balanceOf, INVOICE_STATUS_LABEL, type InvoiceDetail, naira, toNumber} from '@/hooks/billing';
 import {useParent} from '@/hooks/parent';
 import {type OnlinePayment, usePayments} from '@/hooks/payments';
 import {Button} from '@/components/ui/button';
@@ -52,7 +52,7 @@ export default function ParentInvoicePage() {
     }
 
     const closed = invoice.status === 'CANCELLED' || invoice.status === 'REFUNDED';
-    const balance = closed ? 0 : Math.max(0, toNumber(invoice.total) - toNumber(invoice.paid));
+    const balance = closed ? 0 : balanceOf(invoice);
     // Parents see payments and refunds, not internal notes about the invoice being issued.
     const payments = invoice.history.filter((h) => toNumber(h.amount) > 0);
     const awaiting = online
@@ -98,6 +98,7 @@ export default function ParentInvoicePage() {
                     <dl className='space-y-1.5 text-sm'>
                         {[
                             ['Total', naira(invoice.total)],
+                            ...(toNumber(invoice.discount) > 0 ? [['Discount', `− ${naira(invoice.discount)}`]] : []),
                             ['Paid', naira(invoice.paid)],
                             ['Balance', naira(balance)],
                         ].map(([label, value]) => (

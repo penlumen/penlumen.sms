@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {useParams} from 'next/navigation';
 import {ArrowLeft, Printer} from 'lucide-react';
 
-import {INVOICE_STATUS_LABEL, type InvoiceDetail, naira, toNumber, useBilling} from '@/hooks/billing';
+import {balanceOf, INVOICE_STATUS_LABEL, type InvoiceDetail, naira, toNumber, useBilling} from '@/hooks/billing';
 import {Button} from '@/components/ui/button';
 import {Skeleton} from '@/components/ui/skeleton';
 import {BillingHeader, InvoiceStatusBadge} from '@/components/app/billing-ui';
@@ -49,7 +49,7 @@ export default function InvoicePage() {
         );
     }
 
-    const balance = Math.max(0, toNumber(invoice.total) - toNumber(invoice.paid));
+    const balance = balanceOf(invoice);
 
     return (
         <div className='space-y-6'>
@@ -82,6 +82,7 @@ export default function InvoicePage() {
                     <dl className='space-y-1.5 text-sm'>
                         {[
                             ['Total', naira(invoice.total)],
+                            ...(toNumber(invoice.discount) > 0 ? [['Discount', `− ${naira(invoice.discount)}`]] : []),
                             ['Paid', naira(invoice.paid)],
                             ['Balance', naira(invoice.status === 'CANCELLED' ? 0 : balance)],
                         ].map(([label, value]) => (
