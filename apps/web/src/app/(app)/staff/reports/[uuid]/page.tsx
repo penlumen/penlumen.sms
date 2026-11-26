@@ -5,7 +5,7 @@ import Cookies from 'js-cookie';
 import {ArrowLeft, Clock, Edit, Printer as Print, Save, Users, X} from 'lucide-react';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
-import {Checkbox} from '@/components/ui/checkbox';
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
 import {Input} from '@/components/ui/input';
 import {Label} from '@/components/ui/label';
 import {Textarea} from '@/components/ui/textarea';
@@ -66,7 +66,7 @@ interface ResultData {
         calendar: CalendarData;
         class_name: string;
         teacher_remark: string;
-        principal_remark: string;
+        head_teacher_remark: string;
         status?: string;
         approval_requested?: boolean;
     };
@@ -83,6 +83,19 @@ const EDITABLE_FIELDS = ['assessment', 'examination'] as const;
 type ScoreField = (typeof EDITABLE_FIELDS)[number];
 const FIELD_LABELS: Record<ScoreField, string> = {assessment: 'Assessment', examination: 'Examination'};
 
+/** What saving does to the report's status. Teachers draft or submit; administrators can do all four. */
+type StatusAction = 'draft' | 'submit' | 'approve' | 'reject';
+const STATUS_ACTIONS: Record<StatusAction, { label: string; hint: string; adminOnly?: boolean }> = {
+    draft: {label: 'Save as draft', hint: 'Still being worked on: not sent for approval.'},
+    submit: {label: 'Submit for approval', hint: 'Sends it to the administrators to review.'},
+    approve: {label: 'Approve', hint: 'Publishes it: parents and students can see and print it.', adminOnly: true},
+    reject: {label: 'Reject', hint: 'Sends it back to the class teachers to review.', adminOnly: true},
+};
+const actionFor = (result: { status?: string; approval_requested?: boolean }): StatusAction =>
+    result.status === 'APPROVED' ? 'approve'
+        : result.status === 'REJECTED' ? 'reject'
+            : result.approval_requested ? 'submit' : 'draft';
+
 export default function ReportPage() {
     const {uuid} = useParams();
     const router = useRouter();
@@ -92,15 +105,16 @@ export default function ReportPage() {
     const [isEditing, setIsEditing] = useState(false);
     const [reportData, setReportData] = useState<ResultData | null>(null);
     const [assessments, setAssessments] = useState<AssessmentObject[]>([]);
-    const [approved, setApproved] = useState(false);
-    const [requestApproval, setRequestApproval] = useState(false);
+    const [action, setAction] = useState<StatusAction>('draft');
+    const [reason, setReason] = useState('');
     const [isAdmin, setIsAdmin] = useState(false);
     const [affective, setAffective] = useState<AffectiveRow[]>([]);
 
     useEffect(() => {
         const userString = Cookies.get('user');
         const user = userString ? JSON.parse(userString) : null;
-        setIsAdmin(user?.position === 'ADMINISTRATIVE');
+        // Same rule as the API: Admin and Root accounts, and administrative staff.
+        setIsAdmin(['ROOT', 'ADMIN'].includes(user?.role) || user?.position === 'ADMINISTRATIVE');
     }, []);
 
     const fetchData = async () => {
@@ -110,8 +124,8 @@ export default function ReportPage() {
                 setReportData(response.data);
                 setAssessments(response.data.assessments || []);
                 setAffective(response.data.affective || []);
-                setApproved(response.data.result.status === 'APPROVED');
-                setRequestApproval(!!response.data.result.approval_requested);
+                setAction(actionFor(response.data.result));
+                setReason('');
             }
         } catch (error) {
             console.error('Error fetching report', error);
@@ -142,8 +156,8 @@ export default function ReportPage() {
                 const traitUuid = event.field.split(':')[1];
                 const rating = event.value === '' ? null : Number(event.value);
                 setAffective((prev) => prev.map((row) => (row.trait_uuid === traitUuid ? {...row, rating} : row)));
-            } else if (event.field === 'remark:teacher_remark' || event.field === 'remark:principal_remark') {
-                const key = event.field.split(':')[1] as 'teacher_remark' | 'principal_remark';
+            } else if (event.field === 'remark:teacher_remark' || event.field === 'remark:head_teacher_remark') {
+                const key = event.field.split(':')[1] as 'teacher_remark' | 'head_teacher_remark';
                 setReportData((prev) => (prev ? {...prev, result: {...prev.result, [key]: event.value}} : prev));
             }
         },
@@ -212,7 +226,7 @@ export default function ReportPage() {
         emitFieldChange(`assessment:${assessmentUuid}:${field}`, value);
     };
 
-    const updateRemark = (field: 'teacher_remark' | 'principal_remark', value: string) => {
+    const updateRemark = (field: 'teacher_remark' | 'head_teacher_remark', value: string) => {
         setReportData(prev => prev ? {
             ...prev,
             result: {...prev.result, [field]: value}
@@ -234,9 +248,10 @@ export default function ReportPage() {
                 reportData.result.uuid,
                 {
                     teacher_remark: reportData.result.teacher_remark,
-                    principal_remark: reportData.result.principal_remark,
-                    status: approved ? 'APPROVED' : 'PENDING',
-                    approval_requested: isAdmin ? requestApproval : requestApproval,
+                    head_teacher_remark: reportData.result.head_teacher_remark,
+                    status: action === 'approve' ? 'APPROVED' : action === 'reject' ? 'REJECTED' : 'PENDING',
+                    approval_requested: action === 'submit',
+                    ...(action === 'reject' && reason.trim() ? {reason: reason.trim()} : {}),
                 },
                 assessments,
                 affective
@@ -433,7 +448,14 @@ export default function ReportPage() {
                                                     aria-invalid={overLimit(a, field)}
                                                     title={overLimit(a, field) ? `From 0 to ${limits[field]}` : undefined}
                                                     value={a[field]}
-                                                    onChange={(e) => updateAssessment(a.uuid, field, Number(e.target.value))}
+                                                    // Typing replaces the score (the 0 is selected), and a
+                                                    // leading 0 is dropped, so "9" never becomes "09".
+                                                    onFocus={(e) => e.currentTarget.select()}
+                                                    onChange={(e) => {
+                                                        const raw = e.target.value;
+                                                        if (/^0\d/.test(raw)) e.target.value = raw.replace(/^0+(?=\d)/, '');
+                                                        updateAssessment(a.uuid, field, Number(e.target.value));
+                                                    }}
                                                     className={`w-20 mx-auto text-center h-8 focus:ring-emerald-500 ${
                                                         overLimit(a, field) ? 'border-destructive text-destructive focus-visible:ring-destructive' : ''
                                                     }`}
@@ -466,40 +488,6 @@ export default function ReportPage() {
                     </p>
                 )}
             </Card>
-
-            {/* RESULT WORKFLOW */}
-            {isEditing && (
-                <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50/50 px-4 py-3">
-                    {isAdmin ? (
-                        <div className="flex items-center gap-2">
-                            <Checkbox
-                                id="approve-result"
-                                checked={approved}
-                                onCheckedChange={(checked) => setApproved(checked === true)}
-                            />
-                            <Label htmlFor="approve-result" className="text-sm font-medium cursor-pointer">
-                                Approve this result
-                            </Label>
-                        </div>
-                    ) : (
-                        <div className="flex items-start gap-2">
-                            <Checkbox
-                                id="request-approval"
-                                checked={requestApproval}
-                                onCheckedChange={(checked) => setRequestApproval(checked === true)}
-                            />
-                            <div>
-                                <Label htmlFor="request-approval" className="text-sm font-medium cursor-pointer">
-                                    Request administrator approval
-                                </Label>
-                                <p className="text-xs text-muted-foreground">
-                                    Submit this result for administrator review. Your teacher comment is included only when approval is requested.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* AFFECTIVE DOMAIN - behaviour traits set in Branch Settings, rated 1-5 */}
             {affective.length > 0 && (
@@ -552,7 +540,55 @@ export default function ReportPage() {
                 </Card>
             )}
 
-            {/* REMARKS SECTION - stacked top (teacher) then bottom (principal) */}
+            {/* RESULT WORKFLOW */}
+            {isEditing && (
+                <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50/50 px-4 py-3">
+                    {!isAdmin && result.status === 'APPROVED' ? (
+                        <p className="text-sm text-muted-foreground">
+                            This report has been approved. Only an administrator can change its status.
+                        </p>
+                    ) : (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="report-status" className="text-sm font-medium">Status</Label>
+                                <Select value={action} onValueChange={(value) => value && setAction(value as StatusAction)}>
+                                    <SelectTrigger id="report-status" className="w-full sm:w-56">
+                                        <SelectValue>{STATUS_ACTIONS[action].label}</SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {(Object.keys(STATUS_ACTIONS) as StatusAction[])
+                                            .filter((key) => isAdmin || !STATUS_ACTIONS[key].adminOnly)
+                                            .map((key) => (
+                                                <SelectItem key={key} value={key}>{STATUS_ACTIONS[key].label}</SelectItem>
+                                            ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <p className="text-xs text-muted-foreground sm:pt-8">
+                                {!isAdmin && result.status === 'REJECTED'
+                                    ? 'An administrator rejected this report. Fix it, then submit it for approval again.'
+                                    : STATUS_ACTIONS[action].hint}
+                            </p>
+                        </div>
+                    )}
+                    {isAdmin && action === 'reject' && (
+                        <div className="space-y-1.5">
+                            <Label htmlFor="reject-reason" className="text-sm font-medium">Reason (optional)</Label>
+                            <Textarea
+                                id="reject-reason"
+                                value={reason}
+                                maxLength={300}
+                                onChange={(e) => setReason(e.target.value)}
+                                placeholder="e.g. Mathematics examination scores are missing."
+                                className="min-h-[70px]"
+                            />
+                            <p className="text-xs text-muted-foreground">Sent to the class teachers with the rejection.</p>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* REMARKS SECTION - teacher, then head teacher */}
             <div className="flex flex-col gap-6">
                 <Card className="shadow-sm border-slate-200">
                     <CardHeader className="pb-2 bg-slate-50/50 border-b mb-4">
@@ -561,17 +597,13 @@ export default function ReportPage() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        {isEditing && (isAdmin || requestApproval) ? (
+                        {isEditing ? (
                             <Textarea
                                 value={result.teacher_remark || ''}
                                 onChange={(e) => updateRemark('teacher_remark', e.target.value)}
-                                placeholder="Enter teacher comment for the approval request..."
+                                placeholder="Enter the class teacher's comment..."
                                 className="min-h-[100px] border-slate-200 focus:border-emerald-500"
                             />
-                        ) : isEditing ? (
-                            <p className="text-sm text-muted-foreground">
-                                Teacher comment is hidden until administrator approval is requested.
-                            </p>
                         ) : (
                             <p className="text-sm italic text-slate-600 leading-relaxed">
                                 {result.teacher_remark || 'No official remark recorded for this period.'}
@@ -580,31 +612,28 @@ export default function ReportPage() {
                     </CardContent>
                 </Card>
 
-                {/* Principal remark: always visible when reading, but while editing it's
-                    only shown to an admin who has ticked the approval checkbox above. */}
-                {(!isEditing || (isAdmin && approved)) && (
-                    <Card className="shadow-sm border-slate-200">
-                        <CardHeader className="pb-2 bg-slate-50/50 border-b mb-4">
-                            <CardTitle className="text-xs font-black uppercase text-slate-500 tracking-widest">
-                                Principal remark
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            {isEditing ? (
-                                <Textarea
-                                    value={result.principal_remark || ''}
-                                    onChange={(e) => updateRemark('principal_remark', e.target.value)}
-                                    placeholder="Enter official principal comment..."
-                                    className="min-h-[100px] border-slate-200 focus:border-emerald-500"
-                                />
-                            ) : (
-                                <p className="text-sm italic text-slate-600 leading-relaxed">
-                                    {result.principal_remark || 'No official remark recorded for this period.'}
-                                </p>
-                            )}
-                        </CardContent>
-                    </Card>
-                )}
+                {/* Head teacher remark: administrators write it; teachers read it. */}
+                <Card className="shadow-sm border-slate-200">
+                    <CardHeader className="pb-2 bg-slate-50/50 border-b mb-4">
+                        <CardTitle className="text-xs font-black uppercase text-slate-500 tracking-widest">
+                            Head teacher remark
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        {isEditing && isAdmin ? (
+                            <Textarea
+                                value={result.head_teacher_remark || ''}
+                                onChange={(e) => updateRemark('head_teacher_remark', e.target.value)}
+                                placeholder="Enter the head teacher's comment..."
+                                className="min-h-[100px] border-slate-200 focus:border-emerald-500"
+                            />
+                        ) : (
+                            <p className="text-sm italic text-slate-600 leading-relaxed">
+                                {result.head_teacher_remark || 'No official remark recorded for this period.'}
+                            </p>
+                        )}
+                    </CardContent>
+                </Card>
             </div>
 
             {/* UNSAVED CHANGES FLOATER */}

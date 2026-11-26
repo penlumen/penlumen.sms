@@ -38,6 +38,7 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import {BillingHeader, InvoiceStatusBadge} from '@/components/app/billing-ui';
+import {DataTransferMenu} from '@/components/app/data-transfer-menu';
 import {CreateInvoiceSheet, UpdateStatusSheet} from '@/components/app/invoice-sheets';
 import {formatDate} from '@/lib/date';
 
@@ -192,10 +193,13 @@ export default function InvoicesPage() {
                 title='Invoices'
                 description='View and generate invoices'
                 action={
-                    <Button onClick={() => setCreateOpen(true)}>
-                        <Plus className='h-4 w-4'/>
-                        Create invoice
-                    </Button>
+                    <div className='flex flex-wrap gap-2'>
+                        <DataTransferMenu types={['invoices']} onImported={load}/>
+                        <Button onClick={() => setCreateOpen(true)}>
+                            <Plus className='h-4 w-4'/>
+                            Create invoice
+                        </Button>
+                    </div>
                 }
             />
 

@@ -461,10 +461,18 @@ export class BillingService {
     return `INV-${stamp}-${randomBytes(4).toString('hex').toUpperCase()}`;
   }
 
-  async invoices(branchUuid: string | undefined, decoded: DecodedUser) {
+  /** The branch's invoices, or one student's (their profile's Invoice tab). */
+  async invoices(
+    branchUuid: string | undefined,
+    decoded: DecodedUser,
+    studentUuid?: string,
+  ) {
     this.assertStaff(decoded);
     const invoices = await this.prisma.invoice.findMany({
-      where: { branch_uuid: this.requireBranch(branchUuid) },
+      where: {
+        branch_uuid: this.requireBranch(branchUuid),
+        ...(studentUuid ? { student_uuid: studentUuid } : {}),
+      },
       orderBy: { created_at: 'desc' },
       include: this.invoiceListInclude,
     });

@@ -122,7 +122,9 @@ export const useBilling = () => {
     const removeTemplate = async (uuid: string) =>
         unwrap((await axiosInstance.delete(`/api/v1/billing-template/delete/${uuid}`)).data);
 
-    const invoices = async () => unwrap((await axiosInstance.get('/api/v1/invoice/index')).data);
+    /** The branch's invoices, or just one student's. */
+    const invoices = async (studentUuid?: string) =>
+        unwrap((await axiosInstance.get('/api/v1/invoice/index', {params: studentUuid ? {student_uuid: studentUuid} : {}})).data);
     const invoice = async (uuid: string) => unwrap((await axiosInstance.get(`/api/v1/invoice/show/${uuid}`)).data);
     const createInvoices = async (payload: InvoicePayload) =>
         unwrap((await axiosInstance.post('/api/v1/invoice/create', payload)).data);

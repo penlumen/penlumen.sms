@@ -2,9 +2,11 @@ import {axiosInstance} from '@/lib/axios';
 
 type ResultData = {
     teacher_remark: string | null;
-    principal_remark: string | null;
+    head_teacher_remark: string | null;
     status: 'APPROVED' | 'PENDING' | 'REJECTED';
     approval_requested?: boolean;
+    /** Sent to the class teachers with a rejection. */
+    reason?: string;
 };
 
 type AssessmentObject = {
@@ -19,6 +21,8 @@ export const useResult = () => {
     /** Reports list, already limited by the API to the classes this user can see. */
     const index = async (filters: {
         page?: number;
+        /** Rows per page, up to 100 (default 20). */
+        limit?: number;
         status?: string;
         class_uuid?: string;
         calendar_uuid?: string;

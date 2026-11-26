@@ -378,7 +378,7 @@ model Result {
   status             ResultStatus @default(PENDING)
   approval_requested Boolean      @default(false)
   teacher_remark     String?
-  principal_remark   String?
+  head_teacher_remark String?
   created_at         DateTime     @default(now())
   updated_at         DateTime     @updatedAt
 

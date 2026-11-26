@@ -635,36 +635,58 @@ export class ResultsService {
       );
     }
 
+    // A remark as typed: undefined leaves it as it is, empty clears it.
+    const remark = (value: unknown) =>
+      typeof value === 'string'
+        ? value.trim().slice(0, 2000) || null
+        : undefined;
+    const status = ['PENDING', 'APPROVED', 'REJECTED'].includes(result?.status)
+      ? (result.status as 'PENDING' | 'APPROVED' | 'REJECTED')
+      : existing.status;
+    const requested =
+      typeof result?.approval_requested === 'boolean'
+        ? result.approval_requested
+        : existing.approval_requested;
+    const reason =
+      typeof result?.reason === 'string'
+        ? result.reason.trim().slice(0, 300)
+        : '';
+
     const updated = await this.prisma.result.update({
       where: { uuid: resultUuid },
       data: {
         overall: total,
         calendar_uuid: result?.calendar,
-        approval_requested: isAdmin
-          ? existing.approval_requested
-          : !!result?.approval_requested,
-        // Teacher comments are only submitted as part of an explicit approval
-        // request. This keeps ordinary result edits free of a teacher comment.
-        teacher_remark: result?.approval_requested
-          ? result?.teacher_remark
-          : isAdmin
-            ? result?.teacher_remark
-            : null,
-        // Only an administrator can approve a result or write the principal's
-        // remark. A staff update cannot change either field.
+        // Class teachers write their remark whenever they like (drafts too).
+        teacher_remark: remark(result?.teacher_remark),
         ...(isAdmin
           ? {
-              status: result?.status,
-              principal_remark: result?.principal_remark,
-              approval_requested:
-                result?.approval_requested ?? existing.approval_requested,
+              // Administrators set any status (Draft, Submitted, Approved,
+              // Rejected) and write the head teacher's remark.
+              status,
+              approval_requested: status === 'PENDING' ? requested : false,
+              head_teacher_remark: remark(result?.head_teacher_remark),
             }
-          : {}),
+          : existing.status === 'APPROVED'
+            ? {}
+            : {
+                // Teachers submit for approval or keep it as a draft;
+                // resubmitting a rejected report puts it back to pending.
+                approval_requested: requested,
+                ...(existing.status === 'REJECTED' && requested
+                  ? { status: 'PENDING' as const }
+                  : {}),
+              }),
       },
       include: { student: true, assessments: true },
     });
 
-    await this.notifyResultChange(existing, updated, decoded);
+    await this.notifyResultChange(
+      existing,
+      updated,
+      decoded,
+      reason || undefined,
+    );
     if (
       updated.status === 'APPROVED' &&
       existing.status !== 'APPROVED' &&
@@ -722,7 +744,7 @@ export class ResultsService {
     if (!student) return;
     const subject = `${student.name}'s result (${before.class_name})`;
 
-    if (decoded.position !== 'ADMINISTRATIVE') {
+    if (!this.isAdmin(decoded)) {
       if (after.approval_requested && !before.approval_requested) {
         await this.notifications.notifyBranchAdmins(
           student.branch_uuid,

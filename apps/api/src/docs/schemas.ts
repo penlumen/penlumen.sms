@@ -457,7 +457,7 @@ class ScoreRow {
 export class ResultUpdateBody {
   @ApiPropertyOptional({
     description:
-      'teacher_remark, principal_remark, status, approval_requested, calendar',
+      'teacher_remark, head_teacher_remark, status (PENDING, APPROVED or REJECTED), approval_requested, reason (sent to the class teachers when rejecting), calendar',
   })
   result?: Record<string, unknown>;
   @ApiProperty({ type: [ScoreRow] })

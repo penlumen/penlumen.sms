@@ -11,6 +11,9 @@ import {PeopleTable} from '@/components/app/people-table';
 import {PersonFormSheet, type PersonRecord} from '@/components/app/person-form-sheet';
 import {PersonDetailSheet} from '@/components/app/person-detail-sheet';
 import {DataTransferMenu} from '@/components/app/data-transfer-menu';
+import {useStudent} from '@/hooks/student';
+import type {StudentRecord} from '@/components/app/student-form-sheet';
+import {StudentDetailSheet} from '@/components/app/student-detail-sheet';
 
 export default function ParentsPage() {
     const {index} = useUser();
@@ -20,6 +23,11 @@ export default function ParentsPage() {
     const [formOpen, setFormOpen] = useState(false);
     const [detailOpen, setDetailOpen] = useState(false);
     const [activePerson, setActivePerson] = useState<PersonRecord | null>(null);
+    // Students, to show each parent's children.
+    const {index: indexStudents} = useStudent();
+    const [students, setStudents] = useState<StudentRecord[]>([]);
+    const [activeChild, setActiveChild] = useState<StudentRecord | null>(null);
+    const children = activePerson ? students.filter((s) => s.parent_uuid === activePerson.uuid) : [];
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -38,6 +46,9 @@ export default function ParentsPage() {
     };
 
     useEffect(() => {
+        indexStudents()
+            .then((r) => r.success && setStudents(r.data.students || []))
+            .catch(() => undefined);
         fetchData();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -96,6 +107,43 @@ export default function ParentsPage() {
                 open={detailOpen}
                 onOpenChange={setDetailOpen}
                 person={activePerson}
+                extra={
+                    <div className='py-3'>
+                        <p className='mb-2 text-sm text-muted-foreground'>
+                            {children.length === 1 ? 'Child' : `Children (${children.length})`}
+                        </p>
+                        {children.length === 0 ? (
+                            <p className='px-2 text-sm text-muted-foreground'>No children linked yet.</p>
+                        ) : (
+                            <ul className='space-y-1'>
+                                {children.map((child) => (
+                                    <li key={child.uuid}>
+                                        <button
+                                            type='button'
+                                            className='flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted'
+                                            onClick={() => {
+                                                setDetailOpen(false);
+                                                setActiveChild(child);
+                                            }}
+                                        >
+                                            <span className='font-medium'>{child.name}</span>
+                                            <span className='text-muted-foreground'>{child.class?.name}</span>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                }
+            />
+            <StudentDetailSheet
+                open={!!activeChild}
+                onOpenChange={(open) => !open && setActiveChild(null)}
+                student={activeChild}
+                onViewParent={() => {
+                    setActiveChild(null);
+                    setDetailOpen(true);
+                }}
             />
         </div>
     );

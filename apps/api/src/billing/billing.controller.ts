@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { DecodedUser } from '../common/types/auth.js';
@@ -81,8 +82,9 @@ export class InvoicesController {
   index(
     @Headers('x-branch-session') branchUuid: string,
     @CurrentUser() user: DecodedUser,
+    @Query('student_uuid') studentUuid?: string,
   ) {
-    return this.billingService.invoices(branchUuid, user);
+    return this.billingService.invoices(branchUuid, user, studentUuid);
   }
 
   @Get('show/:uuid')
