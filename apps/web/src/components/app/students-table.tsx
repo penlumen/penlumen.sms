@@ -29,6 +29,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover';
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/select';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -47,6 +48,8 @@ import type {StudentRecord} from '@/components/app/student-form-sheet';
 import {formatDate} from '@/lib/date';
 
 const PAGE_SIZE = 10;
+const ALL_CLASSES = 'all';
+const NO_CLASS = 'none';
 
 interface StudentsTableProps {
     students: StudentRecord[];
@@ -61,9 +64,18 @@ export function StudentsTable({students, onView, onViewParent, onEdit, fetchData
     const {remove} = useStudent();
     const [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [classFilter, setClassFilter] = useState(ALL_CLASSES);
     const [page, setPage] = useState(1);
     const [pendingDelete, setPendingDelete] = useState<StudentRecord | null>(null);
     const [deleting, setDeleting] = useState(false);
+
+    // The classes these students are in, by name.
+    const classes = useMemo(() => {
+        const map = new Map<string, string>();
+        students.forEach((s) => s.class && map.set(s.class.uuid, s.class.name));
+        return [...map].sort((a, b) => a[1].localeCompare(b[1], undefined, {numeric: true}));
+    }, [students]);
+    const someWithoutClass = students.some((s) => !s.class);
 
     const filtered = useMemo(() => {
         return students.filter((student) => {
@@ -72,9 +84,16 @@ export function StudentsTable({students, onView, onViewParent, onEdit, fetchData
                 student.name.toLowerCase().includes(search.toLowerCase()) ||
                 student.reg_number?.toLowerCase().includes(search.toLowerCase());
             const matchesStatus = !statusFilter || student.status === statusFilter;
-            return matchesSearch && matchesStatus;
+            const matchesClass =
+                classFilter === ALL_CLASSES ||
+                (classFilter === NO_CLASS ? !student.class : student.class?.uuid === classFilter);
+            return matchesSearch && matchesStatus && matchesClass;
         });
-    }, [students, search, statusFilter]);
+    }, [students, search, statusFilter, classFilter]);
+    const classLabel =
+        classFilter === ALL_CLASSES ? 'All classes'
+            : classFilter === NO_CLASS ? 'No class'
+                : classes.find(([uuid]) => uuid === classFilter)?.[1] || 'All classes';
 
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -124,17 +143,38 @@ export function StudentsTable({students, onView, onViewParent, onEdit, fetchData
     return (
         <div className='space-y-4'>
             <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-                <div className='relative w-full sm:max-w-xs'>
-                    <Search className='absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground'/>
-                    <Input
-                        placeholder='Search'
-                        className='pl-8'
-                        value={search}
-                        onChange={(e) => {
-                            setSearch(e.target.value);
+                <div className='flex w-full flex-col gap-2 sm:flex-row sm:items-center'>
+                    <div className='relative w-full sm:max-w-xs'>
+                        <Search className='absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground'/>
+                        <Input
+                            placeholder='Search'
+                            className='pl-8'
+                            value={search}
+                            onChange={(e) => {
+                                setSearch(e.target.value);
+                                setPage(1);
+                            }}
+                        />
+                    </div>
+                    <Select
+                        value={classFilter}
+                        onValueChange={(value) => {
+                            if (!value) return;
+                            setClassFilter(value);
                             setPage(1);
                         }}
-                    />
+                    >
+                        <SelectTrigger className='w-full sm:w-44' aria-label='Class'>
+                            <SelectValue>{classLabel}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value={ALL_CLASSES}>All classes</SelectItem>
+                            {classes.map(([uuid, name]) => (
+                                <SelectItem key={uuid} value={uuid}>{name}</SelectItem>
+                            ))}
+                            {someWithoutClass && <SelectItem value={NO_CLASS}>No class</SelectItem>}
+                        </SelectContent>
+                    </Select>
                 </div>
                 <div className='flex items-center gap-2'>
                     <Popover>

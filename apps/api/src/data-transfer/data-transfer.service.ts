@@ -44,6 +44,17 @@ interface Planned extends RowResult {
 
 const lower = (value: string) => value.trim().toLowerCase();
 
+/** Money as whole kobo, so sums don't drift. */
+const kobo = (naira: number) => Math.round(naira * 100);
+
+const INVOICE_STATUS_LABEL: Record<string, string> = {
+  PENDING: 'Pending',
+  PART_PAYMENT: 'Part payment',
+  FULL_PAYMENT: 'Full payment',
+  CANCELLED: 'Cancelled',
+  REFUNDED: 'Refunded',
+};
+
 /** dd/mm/yyyy, as dates are shown everywhere in the app. */
 const ddmmyyyy = (date: Date | null) =>
   date
@@ -301,6 +312,53 @@ export class DataTransferService {
             })),
           );
       }
+      case 'invoices': {
+        const invoices = await this.prisma.invoice.findMany({
+          where: { branch_uuid: branchUuid },
+          orderBy: { created_at: 'desc' },
+          select: {
+            number: true,
+            status: true,
+            total: true,
+            discount: true,
+            paid: true,
+            issued_at: true,
+            student: {
+              select: {
+                name: true,
+                reg_number: true,
+                class: { select: { name: true } },
+              },
+            },
+            class: { select: { name: true } },
+            calendar: { select: { session: true, term: true } },
+            template: { select: { name: true } },
+          },
+        });
+        return invoices.map((inv) => {
+          const total = kobo(Number(inv.total));
+          const discount = kobo(Number(inv.discount));
+          const paid = kobo(Number(inv.paid));
+          return {
+            number: inv.number,
+            reg_number: inv.student.reg_number,
+            student: inv.student.name,
+            class: inv.class?.name ?? inv.student.class?.name ?? '',
+            term: inv.calendar
+              ? [inv.calendar.term, inv.calendar.session]
+                  .filter(Boolean)
+                  .join(' · ')
+              : '',
+            template: inv.template?.name ?? '',
+            total: total / 100,
+            discount: discount / 100,
+            paid: paid / 100,
+            balance: Math.max(0, total - discount - paid) / 100,
+            status: INVOICE_STATUS_LABEL[inv.status] ?? inv.status,
+            issued: ddmmyyyy(inv.issued_at),
+          };
+        });
+      }
     }
   }
 
@@ -401,6 +459,8 @@ export class DataTransferService {
         return this.planSubjects(rows, branch.uuid);
       case 'results':
         return this.planResults(rows, branch.uuid, body?.calendar_uuid);
+      case 'invoices':
+        return this.planInvoices(rows, branch.uuid, decoded);
     }
   }
 
@@ -1149,6 +1209,148 @@ export class DataTransferService {
         `${lower(rows[p.row - 2].reg_number || '')}|${lower(rows[p.row - 2].subject || '')}`,
       'student and subject',
     );
+    return planned;
+  }
+
+  /**
+   * Payments from a spreadsheet: each row's Paid and Discount are the new
+   * totals for that invoice, so raising them records a payment (or discount)
+   * of the difference, as "Update status" on the invoice does. Lowering them
+   * isn't allowed here: refunds are recorded on the invoice page.
+   */
+  private async planInvoices(
+    rows: Row[],
+    branchUuid: string,
+    decoded: DecodedUser,
+  ) {
+    const numbers = [
+      ...new Set(rows.map((r) => (r.number ?? '').trim()).filter(Boolean)),
+    ];
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        branch_uuid: branchUuid,
+        number: { in: numbers, mode: 'insensitive' },
+      },
+      select: {
+        uuid: true,
+        number: true,
+        status: true,
+        total: true,
+        discount: true,
+        paid: true,
+      },
+    });
+    const byNumber = new Map(invoices.map((inv) => [lower(inv.number), inv]));
+
+    // "₦89,000.50" or "89000" -> kobo; null when empty, NaN when unreadable.
+    const amount = (value: string | undefined) => {
+      const cleaned = (value ?? '')
+        .replace(/[₦,\s]/g, '')
+        .replace(/^NGN/i, '');
+      if (!cleaned) return null;
+      const n = Number(cleaned);
+      return Number.isFinite(n) && n >= 0 ? kobo(n) : NaN;
+    };
+    const naira = (k: number) =>
+      `₦${(k / 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+
+    const planned = rows.map((row, i) => {
+      const number = (row.number ?? '').trim();
+      const item = this.start(i + 2, number);
+      if (!number) {
+        item.errors.push('Invoice number is required');
+        item.action = 'error';
+        return item;
+      }
+      const invoice = byNumber.get(lower(number));
+      if (!invoice) {
+        item.errors.push('No invoice with this number in this branch');
+        item.action = 'error';
+        return item;
+      }
+      item.key = invoice.number;
+      item.action = 'update';
+
+      const total = kobo(Number(invoice.total));
+      const oldPaid = kobo(Number(invoice.paid));
+      const oldDiscount = kobo(Number(invoice.discount));
+      const paidCell = amount(row.paid);
+      const discountCell = amount(row.discount);
+      if (Number.isNaN(paidCell)) {
+        item.errors.push('Paid must be an amount, e.g. 45000');
+      }
+      if (Number.isNaN(discountCell)) {
+        item.errors.push('Discount must be an amount, e.g. 5000');
+      }
+      const paid =
+        paidCell === null || Number.isNaN(paidCell) ? oldPaid : paidCell;
+      const discount =
+        discountCell === null || Number.isNaN(discountCell)
+          ? oldDiscount
+          : discountCell;
+
+      if (!item.errors.length && paid === oldPaid && discount === oldDiscount) {
+        item.action = 'unchanged';
+        return item;
+      }
+      if (['CANCELLED', 'REFUNDED'].includes(invoice.status)) {
+        item.errors.push(
+          `This invoice is ${INVOICE_STATUS_LABEL[invoice.status].toLowerCase()}; reopen it on the invoice page first`,
+        );
+      }
+      if (paid < oldPaid) {
+        item.errors.push(
+          `Paid is lower than the ${naira(oldPaid)} already recorded; record refunds on the invoice page`,
+        );
+      }
+      if (discount < oldDiscount) {
+        item.errors.push(
+          `Discount is lower than the ${naira(oldDiscount)} already given`,
+        );
+      }
+      if (paid + discount > total) {
+        item.errors.push(
+          `Paid and discount come to more than the ${naira(total)} total`,
+        );
+      }
+      if (item.errors.length) {
+        item.action = 'error';
+        return item;
+      }
+
+      const received = paid - oldPaid;
+      const discounted = discount - oldDiscount;
+      const status: 'FULL_PAYMENT' | 'PART_PAYMENT' =
+        paid + discount >= total ? 'FULL_PAYMENT' : 'PART_PAYMENT';
+      if (received) item.changes.push(`payment of ${naira(received)}`);
+      if (discounted) item.changes.push(`discount of ${naira(discounted)}`);
+      if (status !== invoice.status) {
+        item.changes.push(
+          `status: ${INVOICE_STATUS_LABEL[status].toLowerCase()}`,
+        );
+      }
+      item.apply = async () => {
+        await this.prisma.invoice.update({
+          where: { uuid: invoice.uuid },
+          data: {
+            status,
+            paid: paid / 100,
+            discount: discount / 100,
+            history: {
+              create: {
+                status,
+                amount: received / 100,
+                discount: discounted / 100,
+                description: 'Recorded from a spreadsheet import',
+                created_by_uuid: decoded.uuid,
+              },
+            },
+          },
+        });
+      };
+      return item;
+    });
+    this.duplicates(planned, (p) => lower(p.key), 'invoice number');
     return planned;
   }
 

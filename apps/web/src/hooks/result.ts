@@ -2,9 +2,11 @@ import {axiosInstance} from '@/lib/axios';
 
 type ResultData = {
     teacher_remark: string | null;
-    principal_remark: string | null;
+    head_teacher_remark: string | null;
     status: 'APPROVED' | 'PENDING' | 'REJECTED';
     approval_requested?: boolean;
+    /** Sent to the class teachers with a rejection. */
+    reason?: string;
 };
 
 type AssessmentObject = {
@@ -19,6 +21,8 @@ export const useResult = () => {
     /** Reports list, already limited by the API to the classes this user can see. */
     const index = async (filters: {
         page?: number;
+        /** Rows per page, up to 100 (default 20). */
+        limit?: number;
         status?: string;
         class_uuid?: string;
         calendar_uuid?: string;
@@ -158,6 +162,14 @@ export const useResult = () => {
             : {success: false as const, message: data.message || 'Something went wrong'};
     };
 
+    /** Generate (or refresh) reports for several students for one term. */
+    const bulkCreate = async (student_uuids: string[], calendar_uuid?: string) => {
+        const data = (await axiosInstance.post('/api/v1/result/bulk-create', {student_uuids, calendar_uuid})).data;
+        return data.success
+            ? {success: true as const, message: data.message as string, data: data.data}
+            : {success: false as const, message: data.message || 'Something went wrong'};
+    };
+
     /** Delete many reports and their scores (administrators). */
     const bulkDelete = async (uuids: string[]) => {
         const data = (await axiosInstance.post('/api/v1/result/bulk-delete', {uuids})).data;
@@ -175,5 +187,6 @@ export const useResult = () => {
         remove,
         bulkStatus,
         bulkDelete,
+        bulkCreate,
     };
 };

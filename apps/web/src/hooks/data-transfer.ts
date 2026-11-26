@@ -1,6 +1,6 @@
 import {axiosInstance} from '@/lib/axios';
 
-export type DataType = 'students' | 'staff' | 'parents' | 'classes' | 'subjects' | 'results';
+export type DataType = 'students' | 'staff' | 'parents' | 'classes' | 'subjects' | 'results' | 'invoices';
 
 export interface DataColumn {
     key: string;

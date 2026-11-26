@@ -52,7 +52,7 @@ interface ResultData {
         calendar: CalendarData;
         class_name: string;
         teacher_remark: string;
-        principal_remark: string;
+        head_teacher_remark: string;
         status: 'APPROVED' | 'PENDING' | 'REJECTED';
     };
     /** The student's branch: its logo and address head the report. */
@@ -336,9 +336,9 @@ export default function TraditionalResultSheet() {
                                     className='flex-1 border-b border-black italic px-2'>{resultData.result.teacher_remark}</div>
                             </div>
                             <div className='flex items-end gap-2'>
-                                <span className='font-bold whitespace-nowrap uppercase'>Principal&apos;s Remark:</span>
+                                <span className='font-bold whitespace-nowrap uppercase'>Head Teacher&apos;s Remark:</span>
                                 <div
-                                    className='flex-1 border-b border-black italic px-2'>{resultData.result.principal_remark}</div>
+                                    className='flex-1 border-b border-black italic px-2'>{resultData.result.head_teacher_remark}</div>
                             </div>
 
                             {/*<div className='flex justify-between items-end pt-1'>*/}
@@ -348,7 +348,7 @@ export default function TraditionalResultSheet() {
                             {/*    </div>*/}
                             {/*    <div className="text-center">*/}
                             {/*        <div className="w-32 border-b border-black"></div>*/}
-                            {/*        <span className="text-[10px] uppercase font-bold">Principal Sign & Stamp</span>*/}
+                            {/*        <span className="text-[10px] uppercase font-bold">Head Teacher Sign & Stamp</span>*/}
                             {/*    </div>*/}
                             {/*</div>*/}
                         </div>

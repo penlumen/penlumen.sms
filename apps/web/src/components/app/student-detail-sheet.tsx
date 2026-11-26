@@ -8,6 +8,7 @@ import {Copy, Eye, Plus, Trash2} from 'lucide-react';
 import {useResult} from '@/hooks/result';
 import {useStudentAttendance} from '@/hooks/student-attendance';
 import {useCalendar} from '@/hooks/calendar';
+import {StudentInvoices} from '@/components/app/student-invoices';
 import {Avatar, AvatarFallback, AvatarImage} from '@/components/ui/avatar';
 import {Button} from '@/components/ui/button';
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
@@ -113,10 +114,10 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
                 setTermPickerOpen(false);
                 router.push(`/staff/reports/${response.data.result.uuid}`);
             } else {
-                toast.error(response.message || 'Could not create result');
+                toast.error(response.message || 'Could not generate report');
             }
         } catch (error: any) {
-            toast.error(error.message || 'Could not create result');
+            toast.error(error.message || 'Could not generate report');
         } finally {
             setCreating(false);
         }
@@ -127,13 +128,13 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
         try {
             const response = await remove(pendingDelete.uuid);
             if (response.success) {
-                toast.success('Result deleted');
+                toast.success('Report deleted');
                 fetchResults();
             } else {
-                toast.error(response.message || 'Failed to delete result');
+                toast.error(response.message || 'Failed to delete report');
             }
         } catch (error: any) {
-            toast.error(error.message || 'Failed to delete result');
+            toast.error(error.message || 'Failed to delete report');
         } finally {
             setPendingDelete(null);
         }
@@ -169,7 +170,8 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
                         <TabsList className='w-full'>
                             <TabsTrigger value='overview' className='flex-1'>Overview</TabsTrigger>
                             <TabsTrigger value='attendance' className='flex-1'>Attendance</TabsTrigger>
-                            <TabsTrigger value='results' className='flex-1'>Results</TabsTrigger>
+                            <TabsTrigger value='results' className='flex-1'>Report</TabsTrigger>
+                            <TabsTrigger value='invoices' className='flex-1'>Invoice</TabsTrigger>
                         </TabsList>
 
                         <TabsContent value='overview' className='pt-2'>
@@ -207,7 +209,7 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
                                     <PopoverTrigger asChild>
                                         <Button size='sm'>
                                             <Plus className='h-4 w-4'/>
-                                            New result
+                                            Generate report
                                         </Button>
                                     </PopoverTrigger>
                                     <PopoverContent align='end' className='w-64 space-y-3'>
@@ -243,7 +245,7 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
 
                             {results.length === 0 ? (
                                 <p className='text-sm text-muted-foreground text-center py-6'>
-                                    No results yet.
+                                    No reports yet.
                                 </p>
                             ) : (
                                 <div className='space-y-2'>
@@ -297,6 +299,10 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
                                 </div>
                             )}
                         </TabsContent>
+
+                        <TabsContent value='invoices' className='pt-2'>
+                            <StudentInvoices studentUuid={student.uuid}/>
+                        </TabsContent>
                     </Tabs>
                 </div>
             </SheetContent>
@@ -304,9 +310,9 @@ export function StudentDetailSheet({open, onOpenChange, student, onViewParent}: 
             <Dialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Delete result</DialogTitle>
+                        <DialogTitle>Delete report</DialogTitle>
                         <DialogDescription>
-                            This will permanently delete this result and its assessments. Do you want to proceed?
+                            This will permanently delete this report and its scores. Do you want to proceed?
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>

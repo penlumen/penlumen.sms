@@ -31,10 +31,13 @@ export function CreateInvoiceSheet({
     open,
     onOpenChange,
     onCreated,
+    studentUuids: initialStudents,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onCreated: (invoices: InvoiceListItem[]) => void;
+    /** Students picked when the sheet opens, e.g. from a student's profile. */
+    studentUuids?: string[];
 }) {
     const {templates: fetchTemplates, createInvoices} = useBilling();
     const {index: fetchTerms} = useCalendar();
@@ -51,7 +54,7 @@ export function CreateInvoiceSheet({
 
     useEffect(() => {
         if (!open) return;
-        setStudentUuids([]);
+        setStudentUuids(initialStudents ?? []);
         setTemplateUuid('');
         setDueAt('');
         setNote('');

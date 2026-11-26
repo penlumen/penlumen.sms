@@ -4,7 +4,7 @@ import {useEffect, useState} from 'react';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {toast} from 'sonner';
-import {CheckCircle2, ChevronLeft, ChevronRight, Clock3, MoreVertical, Search, Trash2, XCircle} from 'lucide-react';
+import {CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MoreVertical, Plus, Search, Trash2, XCircle} from 'lucide-react';
 
 import {useResult} from '@/hooks/result';
 import {Avatar, AvatarFallback, AvatarImage} from '@/components/ui/avatar';
@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import {BillingHeader} from '@/components/app/billing-ui';
 import {DataTransferMenu} from '@/components/app/data-transfer-menu';
+import {GenerateReportsSheet} from '@/components/app/generate-reports-sheet';
 import {cn} from '@/lib/utils';
 import {formatDate} from '@/lib/date';
 import Cookies from 'js-cookie';
@@ -110,6 +111,8 @@ export default function ReportsPage() {
     const [debounced, setDebounced] = useState('');
     const [page, setPage] = useState(1);
     const [pendingDelete, setPendingDelete] = useState<ReportRow | null>(null);
+    const [generateOpen, setGenerateOpen] = useState(false);
+    const [exporting, setExporting] = useState(false);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -144,6 +147,51 @@ export default function ReportsPage() {
         load();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [page, classUuid, status, term, debounced]);
+
+    /**
+     * Every report matching the filters and search (all pages), or just the
+     * selected ones, as a CSV file.
+     */
+    const exportCsv = async () => {
+        setExporting(true);
+        try {
+            const filters = {status, class_uuid: classUuid, calendar_uuid: term, search: debounced, limit: 100};
+            const rows: ReportRow[] = [];
+            for (let p = 1; ; p++) {
+                const response = await index({...filters, page: p});
+                if (!response.success) return toast.error(response.message);
+                rows.push(...response.data.results);
+                if (rows.length >= response.data.total || !response.data.results.length) break;
+            }
+            const source = selected.size ? rows.filter((r) => selected.has(r.uuid)) : rows;
+            const csv = [
+                ['Student', 'Reg number', 'Class', 'Session', 'Term', 'Subjects', 'Average', 'Status', 'Last updated'],
+                ...source.map((r) => [
+                    r.student.name,
+                    r.student.reg_number,
+                    r.class_name,
+                    r.calendar?.session || '',
+                    r.calendar?.term || '',
+                    String(r.subjects),
+                    r.average === null ? '' : String(r.average),
+                    STATUS[r.status].label,
+                    formatDate(r.updated_at, ''),
+                ]),
+            ]
+                .map((row) => row.map((cell) => `"${(cell || '').replace(/"/g, '""')}"`).join(','))
+                .join('\n');
+            const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'reports.csv';
+            link.click();
+            URL.revokeObjectURL(url);
+        } catch (error: any) {
+            toast.error(error.message || 'Could not export');
+        } finally {
+            setExporting(false);
+        }
+    };
 
     const confirmDelete = async () => {
         if (!pendingDelete) return;
@@ -211,7 +259,15 @@ export default function ReportsPage() {
                         ? 'Results for the classes you teach'
                         : 'Results and report cards for every class'
                 }
-                action={<DataTransferMenu types={['results']} onImported={load}/>}
+                action={
+                    <div className='flex flex-wrap gap-2'>
+                        <DataTransferMenu types={['results']} onImported={load}/>
+                        <Button onClick={() => setGenerateOpen(true)}>
+                            <Plus className='h-4 w-4'/>
+                            Generate report
+                        </Button>
+                    </div>
+                }
             />
 
             {/* Status summary doubles as a quick filter. */}
@@ -280,6 +336,15 @@ export default function ReportsPage() {
                         ))}
                     </SelectContent>
                 </Select>
+                <Button
+                    variant='outline'
+                    className='lg:ml-auto'
+                    onClick={exportCsv}
+                    disabled={exporting || !data?.total}
+                >
+                    <Download className='h-4 w-4'/>
+                    {exporting ? 'Exporting...' : selected.size ? `Export ${selected.size} selected` : 'Export CSV'}
+                </Button>
             </div>
 
             {data && classes.length === 0 ? (
@@ -504,6 +569,12 @@ export default function ReportsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+            <GenerateReportsSheet
+                open={generateOpen}
+                onOpenChange={setGenerateOpen}
+                onGenerated={load}
+                classUuids={data && !data.filters.all_classes ? classes.map((c) => c.uuid) : undefined}
+            />
         </div>
     );
 }

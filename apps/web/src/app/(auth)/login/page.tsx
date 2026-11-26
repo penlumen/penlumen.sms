@@ -29,9 +29,9 @@ const nextPath = (role: string) => {
 };
 
 const TABS: { value: LoginTab; label: string; idLabel: string }[] = [
+    {value: 'staff', label: 'Staff', idLabel: 'Staff Email'},
+    {value: 'parent', label: 'Parent', idLabel: 'Parent Email'},
     {value: 'student', label: 'Student', idLabel: 'Registration number'},
-    {value: 'staff', label: 'Staff', idLabel: 'Staff ID'},
-    {value: 'parent', label: 'Parent', idLabel: 'Parent ID'},
 ];
 
 // A light decorative strip echoing the school-supplies pattern from the

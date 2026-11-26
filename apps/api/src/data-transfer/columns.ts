@@ -116,6 +116,32 @@ export const DATA_TYPES = {
       { key: 'total', label: 'Total', exportOnly: true },
     ],
   },
+  invoices: {
+    label: 'Invoices',
+    matchBy: 'invoice number; importing records payments and discounts',
+    columns: [
+      { key: 'number', label: 'Invoice number', required: true },
+      { key: 'reg_number', label: 'Reg number', exportOnly: true },
+      { key: 'student', label: 'Student', exportOnly: true },
+      { key: 'class', label: 'Class', exportOnly: true },
+      { key: 'term', label: 'Term', exportOnly: true },
+      { key: 'template', label: 'Template', exportOnly: true },
+      { key: 'total', label: 'Total', exportOnly: true },
+      {
+        key: 'discount',
+        label: 'Discount',
+        hint: 'Total discount given; raise it to give more. Empty keeps it',
+      },
+      {
+        key: 'paid',
+        label: 'Paid',
+        hint: 'Total paid so far; raise it to record a payment. Empty keeps it',
+      },
+      { key: 'balance', label: 'Balance', exportOnly: true },
+      { key: 'status', label: 'Status', exportOnly: true },
+      { key: 'issued', label: 'Issued', exportOnly: true },
+    ],
+  },
 } satisfies Record<
   string,
   { label: string; matchBy: string; columns: ColumnDef[] }
